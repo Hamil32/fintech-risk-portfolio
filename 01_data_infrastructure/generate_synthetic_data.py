@@ -25,6 +25,19 @@ np.random.seed(SEED)
 random.seed(SEED)
 Faker.seed(SEED)
 
+
+def reseed(offset):
+    """
+    Re-fija la semilla antes de cada sección (con un offset distinto por
+    sección) para que sean independientes entre sí: si mañana se edita la
+    lógica de UNA sección (ej. transacciones), no se corre silenciosamente
+    la secuencia de números aleatorios de las secciones siguientes
+    (préstamos, scoring) y sus resultados ya documentados no cambian sin
+    que nos demos cuenta.
+    """
+    np.random.seed(SEED + offset)
+    random.seed(SEED + offset)
+
 N_CLIENTES = 5000
 N_TRANSACCIONES = 50000
 FECHA_INICIO = datetime(2023, 1, 1)
@@ -81,6 +94,7 @@ print(f"   -> Distribucion: {df_clientes['segmento'].value_counts().to_dict()}")
 # 2. CUENTAS
 # ============================================================
 print("\n[2/5] Generando cuentas...")
+reseed(2)
 
 tipos_cuenta_por_segmento = {
     'RETAIL': (['CC', 'CA', 'TARJETA'], [0.20, 0.50, 0.30]),
@@ -127,6 +141,7 @@ print(f"   -> Distribucion por tipo: {df_cuentas['tipo_cuenta'].value_counts().t
 # 3. TRANSACCIONES
 # ============================================================
 print("\n[3/5] Generando transacciones...")
+reseed(3)
 
 tipos = ['DEBITO', 'CREDITO', 'TRANSFERENCIA', 'PAGO', 'EXTRACCION']
 pesos_tipos = [0.30, 0.20, 0.25, 0.15, 0.10]
@@ -144,15 +159,35 @@ for i in range(N_TRANSACCIONES):
     es_fraude = i in ids_fraude
     tipo = np.random.choice(tipos, p=pesos_tipos)
 
-    # Las transacciones fraudulentas tienen patrones específicos
+    # Las transacciones fraudulentas tienen patrones MÁS PROBABLES, no
+    # reglas absolutas — así como en el fraude real, hay solapamiento con
+    # el comportamiento legítimo (si no, cualquier regla simple lo
+    # detectaría al 100%, lo cual no pasa en la vida real).
     if es_fraude:
-        monto = round(random.uniform(5000, 50000), 2)
-        canal = np.random.choice(['APP', 'HOME_BANKING'], p=[0.6, 0.4])
-        hora = random.randint(1, 5)  # Madrugada
+        # 80% "vaciado de cuenta" (monto alto), 20% "card testing"
+        # (montos chicos para probar que la tarjeta/cuenta funciona
+        # antes de un cargo grande) — un patrón de fraude real conocido.
+        if random.random() < 0.80:
+            monto = round(random.uniform(5000, 50000), 2)
+        else:
+            monto = round(random.uniform(50, 2000), 2)
+
+        # 75% de madrugada, 25% en cualquier horario del día
+        hora = random.randint(0, 5) if random.random() < 0.75 else random.randint(0, 23)
+
+        # 85% por canal digital (típico de toma de cuenta), 15% físico
+        # (tarjeta clonada en POS, retiro forzado en ATM)
+        if random.random() < 0.85:
+            canal = np.random.choice(['APP', 'HOME_BANKING'], p=[0.6, 0.4])
+        else:
+            canal = np.random.choice(['POS', 'ATM'], p=[0.5, 0.5])
     else:
         monto = round(abs(np.random.lognormal(8, 1.5)), 2)
         canal = np.random.choice(canales, p=pesos_canales)
-        hora = random.randint(8, 22)
+        # 4% de las transacciones legítimas también ocurre de madrugada
+        # (gente que opera de noche) — el horario nocturno por sí solo no
+        # puede ser una señal perfecta de fraude, como pasa en la realidad.
+        hora = random.randint(0, 5) if random.random() < 0.04 else random.randint(6, 23)
 
     fecha_base = FECHA_INICIO + timedelta(days=random.randint(0, 364))
     fecha = fecha_base.replace(hour=hora, minute=random.randint(0, 59), second=random.randint(0, 59))
@@ -171,6 +206,28 @@ for i in range(N_TRANSACCIONES):
         'flag_revision': 0
     })
 
+# Inyectar patrón de "velocity" (ráfaga) en una porción del fraude: agrupa
+# transacciones fraudulentas ya generadas en grupos de 5, y a 1 de cada 4
+# grupos los reasigna a UN MISMO cliente en una ventana de pocos minutos —
+# simula una toma de cuenta real (varias operaciones seguidas antes de que
+# el banco reaccione). Sin esto, el fraude queda disperso en el tiempo y la
+# regla de velocity (Módulo 03) nunca tendría nada que detectar.
+fraude_idx_ordenados = sorted(ids_fraude)
+TAMANIO_RAFAGA = 7  # > 5 para que supere el umbral "más de 5 en 1 hora" de la regla de velocity
+for inicio in range(0, len(fraude_idx_ordenados), TAMANIO_RAFAGA * 4):
+    grupo = fraude_idx_ordenados[inicio: inicio + TAMANIO_RAFAGA]
+    if len(grupo) < 6:
+        continue
+    cliente_rafaga = random.randint(1, N_CLIENTES)
+    cuentas_cliente_rafaga = cuentas_por_cliente[cliente_rafaga]
+    fecha_base_rafaga = FECHA_INICIO + timedelta(days=random.randint(0, 364), hours=random.randint(0, 5))
+    for offset, idx in enumerate(grupo):
+        transacciones[idx]['cliente_id'] = cliente_rafaga
+        transacciones[idx]['cuenta_id'] = random.choice(cuentas_cliente_rafaga)
+        # Espaciado corto (2-8 min) para que TODO el grupo quede dentro de
+        # la misma ventana de 1 hora, incluso el último respecto al primero.
+        transacciones[idx]['fecha'] = fecha_base_rafaga + timedelta(minutes=offset * random.randint(2, 8))
+
 df_transacciones = pd.DataFrame(transacciones)
 print(f"   -> {len(df_transacciones)} transacciones generadas")
 print(f"   -> Transacciones fraudulentas: {df_transacciones['es_fraude'].sum()} "
@@ -180,6 +237,7 @@ print(f"   -> Transacciones fraudulentas: {df_transacciones['es_fraude'].sum()} 
 # 4. PRÉSTAMOS
 # ============================================================
 print("\n[4/5] Generando prestamos...")
+reseed(4)
 
 # Solo el 40% de clientes tiene préstamos
 clientes_con_prestamo = random.sample(range(1, N_CLIENTES + 1), int(N_CLIENTES * 0.40))
@@ -282,6 +340,7 @@ for estado, count in df_prestamos['estado'].value_counts().items():
 # 5. SCORING HISTÓRICO
 # ============================================================
 print("\n[5/5] Generando scoring historico...")
+reseed(5)
 
 bins = [0, 400, 500, 600, 700, 850]
 labels_riesgo = ['E', 'D', 'C', 'B', 'A']

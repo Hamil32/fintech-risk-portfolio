@@ -15,10 +15,11 @@ Este documento se actualiza a medida que avanzamos de módulo. No reemplaza al [
 2. [Decisiones de arquitectura general](#2-decisiones-de-arquitectura-general)
 3. [Módulo 01 — Data Infrastructure](#3-módulo-01--data-infrastructure)
 4. [Módulo 02 — Credit Risk Analytics](#4-módulo-02--credit-risk-analytics)
-5. [Glosario acumulado](#5-glosario-acumulado)
-6. [Cómo revisar vos mismo cada módulo](#6-cómo-revisar-vos-mismo-cada-módulo)
-7. [Fuentes y referencias](#7-fuentes-y-referencias)
-8. [Registro de cambios](#8-registro-de-cambios)
+5. [Módulo 03 — Fraud Detection](#5-módulo-03--fraud-detection)
+6. [Glosario acumulado](#6-glosario-acumulado)
+7. [Cómo revisar vos mismo cada módulo](#7-cómo-revisar-vos-mismo-cada-módulo)
+8. [Fuentes y referencias](#8-fuentes-y-referencias)
+9. [Registro de cambios](#9-registro-de-cambios)
 
 ---
 
@@ -44,6 +45,7 @@ Cada módulo tiene la misma estructura:
 | **`data/raw/` y `data/processed/` ignorados por git** | Los datos (aunque sean sintéticos) no se versionan en git — son grandes, se regeneran con un script, y esa es la práctica real en la industria (los datasets no van al repo, sí el código que los genera/procesa). Por eso `.gitignore` excluye `*.csv`, `*.db` y las carpetas `data/raw/` y `data/processed/` en cualquier módulo. |
 | **Un módulo = una carpeta con su propio README** | Cada módulo se puede leer, correr y evaluar de forma independiente — así un reclutador (o vos en 6 meses) puede entrar a `02_credit_risk/` sin tener que entender todo el repo primero. |
 | **`Faker('es_AR')`** | Genera nombres, DNIs y textos con formato argentino, para que el dataset "se sienta" local. Es un generador de datos ficticios — no usa ni se conecta a ninguna base de datos real de personas. |
+| **Semilla aleatoria re-fijada al inicio de cada sección** (`reseed()` en `generate_synthetic_data.py`) | Cada sección (clientes, cuentas, transacciones, préstamos, scoring) resetea `random`/`numpy` a un offset propio de la semilla base, en vez de dejar correr una única secuencia continua. Así, si el día de mañana se edita la lógica de UNA sección, las demás no cambian sus resultados por efecto colateral — encontramos este problema en la práctica (ver [sección 5.6](#56-hallazgo-el-modelo-de-fraude-daba-100-de-precisión-y-eso-era-una-mala-señal)) y lo corregimos para que no vuelva a pasar. |
 
 ---
 
@@ -179,21 +181,21 @@ Este script toma los datos "crudos" recién generados y los deja listos para an�
 
 ```
 Clientes:            5.000   (score promedio: 594)
-Cuentas:             7.714
+Cuentas:             7.691
 Transacciones:       50.000  (1.000 marcadas como fraude, 2.0%)
 Préstamos:           2.000
-  VIGENTE:      845 (42.2%)
-  CANCELADO:    364 (18.2%)
-  MORA_90:      247 (12.3%)
-  MORA_30:      237 (11.8%)
-  MORA_60:      176 (8.8%)
-  INCOBRABLE:   131 (6.6%)
+  VIGENTE:      885 (44.2%)
+  CANCELADO:    357 (17.8%)
+  MORA_90:      263 (13.2%)
+  MORA_30:      212 (10.6%)
+  MORA_60:      169 (8.5%)
+  INCOBRABLE:   114 (5.7%)
 Scoring histórico:   20.000  (4 trimestres × 5.000 clientes)
 
 Data quality checks: 20/20 OK
 ```
 
-> Nota: estos números difieren de la primera corrida (documentada originalmente) porque, al construir el Módulo 02, se detectó y corrigió un bug en `asignar_estado_mora()` — ver el hallazgo completo en la [sección 3.9](#39-hallazgo-la-pd-no-salía-monótona-y-cómo-se-corrigió). El dataset se regeneró después del fix, así que estos son los valores vigentes.
+> Nota: estos números cambiaron dos veces desde la primera corrida documentada, por dos correcciones distintas hechas mientras se construían los módulos siguientes: (1) el fix de `asignar_estado_mora()` — ver [sección 3.9](#39-hallazgo-la-pd-no-salía-monótona-y-cómo-se-corrigió) — y (2) el fix de solapamiento de fraude y el desacople de semillas por sección — ver [sección 5.6](#56-hallazgo-el-modelo-de-fraude-daba-100-de-precisión-y-eso-era-una-mala-señal) en el Módulo 03. Estos son los valores vigentes después de ambos fixes.
 
 ### 3.8 Lo que te pueden preguntar sobre este módulo
 
@@ -303,21 +305,21 @@ EL = PD × LGD × EAD
 **Resultados de esta corrida:**
 
 ```
-Cartera total (EAD):        $6.517.181.548
-NPL (mora > 90 días):       $488.932.897   (7.50% de la cartera)
-Expected Loss total:        $385.435.888   (5.91% de la cartera)
+Cartera total (EAD):        $7.353.674.329
+NPL (mora > 90 días):       $468.799.457   (6.38% de la cartera)
+Expected Loss total:        $409.675.120   (5.57% de la cartera)
 
 PD histórica por segmento:      Expected Loss como % de esa cartera:
-  E (muy alto riesgo):  50.0%     14.63%
-  D (alto riesgo):      39.7%     11.66%
-  C (riesgo medio):     24.1%      7.32%
-  B (riesgo bajo):       8.3%      2.46%
-  A (muy bajo riesgo):   2.4%      0.73%
+  E (muy alto riesgo):  46.4%     15.92%
+  D (alto riesgo):      38.4%     11.21%
+  C (riesgo medio):     23.4%      6.87%
+  B (riesgo bajo):       9.4%      2.71%
+  A (muy bajo riesgo):   4.0%      1.19%
 
 Expected Loss por tipo de préstamo (% de esa cartera):
-  PERSONAL:     14.83%  (LGD alto, sin garantía)
-  PRENDARIO:     8.88%
-  HIPOTECARIO:   4.97%  (LGD bajo, con garantía real)
+  PERSONAL:     14.17%  (LGD alto, sin garantía)
+  PRENDARIO:     9.81%
+  HIPOTECARIO:   4.70%  (LGD bajo, con garantía real)
 ```
 
 Todo monótono y consistente con la teoría: a peor segmento, mayor % de Expected Loss sobre su propia cartera; y el tipo de préstamo sin garantía concentra proporcionalmente más pérdida esperada aunque tenga menor PD asignada individual, porque su LGD es mucho más alto.
@@ -332,7 +334,7 @@ tasa_mora_cohorte = (# préstamos en mora de esa cohorte) / (# préstamos totale
 
 🟦 **Real:** esta es la pregunta que cualquier área de riesgo de admisión se hace constantemente: *"¿la política de originación de los últimos trimestres está produciendo peores créditos que antes?"*. Si la tasa de mora sube de forma sostenida en las cohortes más recientes, es una señal de alerta temprana (antes incluso de que esos préstamos lleguen a mora avanzada, porque se los compara "a la misma edad" contra cohortes anteriores — en un análisis más completo se compararía a igual cantidad de meses desde el otorgamiento, no a fecha de corte fija; acá se simplifica comparando el estado actual de cada cohorte).
 
-**Resultado de esta corrida:** tasa de mora promedio de las cohortes más antiguas 39.95% vs. 38.89% en las más recientes → lectura: cartera **estable/levemente mejor** en originación reciente, sin señales de deterioro.
+**Resultado de esta corrida:** tasa de mora promedio de las cohortes más antiguas 36.7% vs. 37.7% en las más recientes. La diferencia es de ~1 punto porcentual — **dentro del ruido muestral esperable** para una cartera de 2.000 préstamos repartidos en 13 cohortes trimestrales (algunas con menos de 120 casos). El script compara solo dos promedios sin ningún test de significancia estadística, así que la lectura honesta acá es *"no hay evidencia de deterioro real de la originación reciente"*, no *"la cartera está empeorando"* — en un caso real, esta comparación se haría con un test de proporciones (ej. test Z de dos proporciones) antes de sacar una conclusión de negocio.
 
 ### 4.5 `roll_rate_matrix.py` — Roll Rate Matrix
 
@@ -346,10 +348,19 @@ Mide qué porcentaje de clientes en un segmento de riesgo (A-E) migra a otro seg
 
 **Resultado de esta corrida** (matriz promedio entre los 4 trimestres del dataset):
 
-- 89.1% de los clientes se mantiene en el mismo segmento de riesgo de un trimestre a otro.
+```
+hacia →   A      B      C      D      E
+desde A  91.2%   8.8%   0.0%   0.0%   0.0%
+desde B   4.3%  88.6%   7.1%   0.0%   0.0%
+desde C   0.0%   6.3%  88.6%   5.1%   0.0%
+desde D   0.0%   0.0%   8.1%  88.3%   3.5%
+desde E   0.0%   0.0%   0.0%  11.9%  88.1%
+```
+
+- 89.0% de los clientes se mantiene en el mismo segmento de riesgo de un trimestre a otro.
 - 6.1% mejora de segmento ("roll-back").
-- 4.8% empeora de segmento ("roll-forward").
-- Ningún cliente salta más de un segmento en un trimestre (ej: nadie pasa de A a C directamente) — comportamiento esperable de un score que cambia gradualmente.
+- 4.9% empeora de segmento ("roll-forward").
+- Ningún cliente salta más de un segmento en un trimestre (ej: nadie pasa de A a C directamente) — comportamiento esperable de un score que cambia gradualmente (recordá que `scoring_historico` se generó como un random walk de a un paso, ver sección 3.4 — la matriz de transición está, en parte, confirmando el propio mecanismo con el que se generaron los datos).
 
 ### 4.6 `credit_scorecard.py` — Scorecard de crédito (WOE + Regresión Logística + Puntos)
 
@@ -385,9 +396,9 @@ Con la regla de interpretación estándar de la industria:
 
 | Variable | IV | Lectura |
 |---|---|---|
-| Score inicial | 0.895 | "Sospechosa" según la regla — **y acá es donde hay que ser honesto**: en este dataset, el score *es* literalmente la variable que se usó para generar la probabilidad de default (ver sección 3.9). Un IV así de alto en un banco real dispararía una revisión por fuga de datos (el modelo "ve" el resultado antes de tiempo); acá es esperable porque el mecanismo causal es así por diseño. En una entrevista, esto es una excelente oportunidad para demostrar que entendés qué es fuga de datos y por qué hay que sospechar de un IV extremo. |
-| Segmento (RETAIL/PYME/CORPORATIVO) | 0.107 | Predictiva media — consistente con que el segmento influye en el score inicial pero no lo determina. |
-| Edad | 0.005 | No predictiva — por diseño, la edad no tuvo ningún rol en la generación del riesgo del cliente. |
+| Score inicial | 0.687 | "Sospechosa" según la regla — **y acá es donde hay que ser honesto**: en este dataset, el score *es* literalmente la variable que se usó para generar la probabilidad de default (ver sección 3.9). Un IV así de alto en un banco real dispararía una revisión por fuga de datos (el modelo "ve" el resultado antes de tiempo); acá es esperable porque el mecanismo causal es así por diseño. En una entrevista, esto es una excelente oportunidad para demostrar que entendés qué es fuga de datos y por qué hay que sospechar de un IV extremo. |
+| Segmento (RETAIL/PYME/CORPORATIVO) | 0.130 | Predictiva media — consistente con que el segmento influye en el score inicial pero no lo determina. |
+| Edad | 0.039 | Predictiva débil — la edad no tuvo ningún rol causal en la generación del riesgo del cliente (ver Módulo 01), así que este valor bajo es puramente ruido de muestreo, no una señal real. |
 | Tipo de préstamo | 0.003 | No predictiva individualmente (su efecto en la pérdida está en el LGD, no en la PD). |
 
 **Paso 4 — Regresión logística sobre las variables en escala WOE:** se entrena `LogisticRegression` prediciendo "es buen pagador" a partir de las 4 variables ya transformadas a WOE. El coeficiente (`beta`) de cada variable indica cuánto pesa esa variable en el modelo final.
@@ -415,7 +426,7 @@ Gini = 2 × AUC - 1
 
 🟦 **Real:** el AUC y el Gini son las métricas estándar de la industria para validar un scorecard — miden qué tan bien el score ordena a los clientes de mejor a peor riesgo (no si predice el valor exacto, sino si *ordena* correctamente). Interpretación de referencia: AUC 0.5 = azar puro, > 0.7 aceptable para un scorecard real, > 0.8 muy bueno, > 0.9 sospechoso (posible fuga).
 
-**Resultado de esta corrida:** AUC = 0.738 (Gini = 0.477) — un scorecard con capacidad de discriminación aceptable según el estándar de la industria. Score promedio de clientes buenos: 543 pts vs. 518 pts en clientes malos — el scorecard sí separa a ambos grupos, aunque la diferencia no es enorme porque, además del score inicial (la variable dominante), se mezclaron variables con poco poder predictivo real (edad, tipo de préstamo) a propósito, para poder mostrar cómo se lee un IV bajo.
+**Resultado de esta corrida:** AUC = 0.729 (Gini = 0.458) — un scorecard con capacidad de discriminación aceptable según el estándar de la industria. Score promedio de clientes buenos: 541 pts vs. 519 pts en clientes malos — el scorecard sí separa a ambos grupos, aunque la diferencia no es enorme porque, además del score inicial (la variable dominante), se mezclaron variables con poco poder predictivo real (edad, tipo de préstamo) a propósito, para poder mostrar cómo se lee un IV bajo.
 
 ### 4.7 Lo que te pueden preguntar sobre este módulo
 
@@ -425,12 +436,156 @@ Gini = 2 × AUC - 1
 | "¿Por qué el LGD varía según el tipo de préstamo?" | "Por la garantía: un hipotecario tiene el inmueble como colateral, así que el banco recupera la mayor parte del monto ejecutando la garantía — LGD bajo. Un préstamo personal no tiene garantía, así que si el cliente no paga, se pierde casi todo — LGD alto." |
 | "¿Qué es un roll rate?" | "Mide qué porcentaje de clientes migra de un segmento de riesgo (o bucket de mora) a otro entre dos períodos. Lo modelé como una matriz de transición de Markov sobre el historial trimestral de segmento de riesgo del cliente." |
 | "¿Qué es WOE y para qué sirve?" | "Weight of Evidence: transforma cualquier variable (numérica o categórica) en un solo número que mide qué tan 'buena' o 'mala' es cada categoría comparada contra el promedio de la cartera. Es el paso previo estándar antes de entrenar la regresión logística de un scorecard." |
-| "¿Qué es el Information Value y qué significa un IV muy alto?" | "Mide el poder predictivo total de una variable. Un IV > 0.5 generalmente es sospechoso — puede indicar que la variable tiene fuga de información (ej: conoce el resultado antes de tiempo). En mi caso, el score tiene un IV de 0.89 porque literalmente generé el dataset sintético usando el score para definir la probabilidad de default, así que es un IV alto *esperado*, no un error — y sé explicar la diferencia entre ambos casos." |
-| "¿Cómo validaste el scorecard?" | "Con AUC y Gini — miden qué tan bien el score ordena a los clientes por riesgo. Obtuve un AUC de 0.74, dentro del rango aceptable para un scorecard real (0.7-0.8)." |
+| "¿Qué es el Information Value y qué significa un IV muy alto?" | "Mide el poder predictivo total de una variable. Un IV > 0.5 generalmente es sospechoso — puede indicar que la variable tiene fuga de información (ej: conoce el resultado antes de tiempo). En mi caso, el score tiene un IV de 0.69 porque literalmente generé el dataset sintético usando el score para definir la probabilidad de default, así que es un IV alto *esperado*, no un error — y sé explicar la diferencia entre ambos casos." |
+| "¿Cómo validaste el scorecard?" | "Con AUC y Gini — miden qué tan bien el score ordena a los clientes por riesgo. Obtuve un AUC de 0.73, dentro del rango aceptable para un scorecard real (0.7-0.8)." |
 
 ---
 
-## 5. Glosario acumulado
+## 5. Módulo 03 — Fraud Detection
+
+### 5.1 Qué problema de negocio resuelve
+
+Un banco no puede revisar manualmente el 100% de sus transacciones — con 50.000 transacciones al año en este dataset (multiplicado por miles en un banco real), hace falta un sistema que **filtre automáticamente** cuáles merecen la atención de un analista humano. Este módulo construye ese sistema en capas, tal como existe en la industria: reglas (rápidas, explicables), un modelo no supervisado (detecta lo nuevo, sin etiqueta) y un modelo supervisado (el más preciso, si hay etiqueta), combinados en un sistema de alertas priorizado.
+
+### 5.2 Qué se construyó
+
+| Archivo | Rol |
+|---|---|
+| [`03_fraud_detection/rule_engine.py`](03_fraud_detection/rule_engine.py) | Capa 1: motor de reglas |
+| [`03_fraud_detection/anomaly_detection.py`](03_fraud_detection/anomaly_detection.py) | Capa 2: Isolation Forest (no supervisado) |
+| [`03_fraud_detection/fraud_model.py`](03_fraud_detection/fraud_model.py) | Capa 3: modelo supervisado (Regresión Logística + Random Forest) |
+| [`03_fraud_detection/alert_system.py`](03_fraud_detection/alert_system.py) | Orquestación: combina las 3 señales en una cola de alertas priorizada |
+| [`03_fraud_detection/sql/`](03_fraud_detection/sql/) | Las mismas reglas y patrones en SQL puro |
+
+### 5.3 `rule_engine.py` — Motor de reglas
+
+Cuatro reglas, cada una con su propia lógica:
+
+| Regla | Fórmula / condición | Por qué es una señal de fraude |
+|---|---|---|
+| **Velocity** | Más de 5 transacciones del mismo cliente en 1 hora | Un atacante que toma control de una cuenta suele hacer varias operaciones seguidas, rápido, antes de que el banco reaccione |
+| **Monto atípico** | `z = (monto - media_cliente) / (desvío_cliente + 1) > 3` | Un monto muy alejado del comportamiento histórico del propio cliente es sospechoso — el "+1" en el denominador evita dividir por cero en clientes con desvío ≈0 |
+| **Horario sospechoso** | Hora entre 1am y 5am | Menor actividad legítima en ese rango, y es cuando suele operar el fraude automatizado |
+| **Canal digital + monto alto** | Canal ∈ {APP, Home Banking} y monto > $20.000 | Los canales digitales son el vector más común de toma de cuenta (no requieren la tarjeta física) |
+
+🟦 **Real:** las cuatro son señales genuinas que usan sistemas antifraude reales — no inventadas para este proyecto. `score_reglas` (cuántas reglas se dispararon) y el umbral operativo (`≥ 2` reglas → revisión) son la forma estándar de combinar reglas simples en un sistema de puntaje compuesto.
+
+📝 **Nota de implementación — velocity check eficiente:** el instructivo original proponía calcular esto con `.expanding().apply()` (evalúa la ventana completa desde el inicio para cada fila, con complejidad O(n²) — con 50.000 filas esto es visiblemente lento e innecesario). Se reemplazó por un *rolling window basado en tiempo* (`.rolling('1h', on='fecha')`), que le pide a pandas contar directamente cuántas filas cayeron en la última hora — mismo resultado, muchísimo más eficiente y es la forma idiomática de resolver esto en pandas.
+
+⚠️ **Limitación reconocida (z-score con data leakage):** el promedio y desvío de cada cliente se calculan sobre *todas* sus transacciones (pasadas y futuras respecto a la transacción evaluada). En producción esto debe calcularse solo con historial *anterior*. Se mantiene así por simplicidad, pero es importante poder señalar la diferencia.
+
+**Resultado de esta corrida:**
+
+```
+Flags generados (score_reglas >= 2): 770 de 50.000 (1.54%)
+  flag_velocity:              72   (0.14%)
+  flag_monto_atipico:        524   (1.05%)
+  flag_horario_sospechoso: 2.308   (4.62%)
+  flag_digital_monto_alto: 3.355   (6.71%)
+
+Precision: 0.490  (de cada 100 alertas, 49 son fraude real)
+Recall:    0.377  (detecta el 37.7% de los fraudes reales)
+F1-Score:  0.426
+```
+
+### 5.4 `anomaly_detection.py` — Isolation Forest
+
+A diferencia de las reglas, este modelo **no usa la etiqueta `es_fraude` para entrenar** — aprende qué combinación de variables (monto, hora, canal, z-score) es "normal" y aísla lo que se desvía. Isolation Forest funciona construyendo muchos árboles de decisión aleatorios: una observación anómala, al ser distinta del resto, se puede aislar con **menos particiones** (queda sola en una rama del árbol mucho más rápido que una observación típica) — el "score de anomalía" es, en esencia, el promedio de cuántas particiones hicieron falta para aislar cada punto en todos los árboles.
+
+🟦 **Real:** es un algoritmo genuino de la librería scikit-learn, ampliamente usado en detección de fraude/anomalías en la industria por su eficiencia (no necesita calcular distancias entre todos los pares de puntos, como otros métodos).
+
+🟨 **Ilustrativo:** el parámetro `contamination=0.02` (la proporción esperada de anomalías) se fijó igual a la tasa de fraude conocida del dataset sintético. En un caso real, **no se conoce la tasa real de fraude de antemano** — este parámetro se calibra según cuántas alertas puede procesar el equipo por día, no contra una "respuesta correcta".
+
+**Resultado de esta corrida:**
+
+```
+Isolation Forest  -> Precision: 0.081  Recall: 0.081  F1: 0.081
+Z-score simple     -> Precision: 0.056  Recall: 0.056  F1: 0.056
+```
+
+Un resultado **modesto y honesto**: sin la etiqueta, el modelo tiene mucho más trabajo para encontrar el patrón de fraude que las reglas (F1=0.43) o el modelo supervisado (ver 5.5). Esto **no es una falla del código** — es la realidad de la detección de anomalías: funciona mejor para encontrar patrones *nuevos* que nadie etiquetó todavía, no para igualar la precisión de un modelo que sí conoce la respuesta. Vale la pena decir esto exactamente así en una entrevista: demuestra que entendés el trade-off real entre ambos enfoques, en vez de mostrar solo el número más lindo.
+
+### 5.5 `fraud_model.py` — Modelo supervisado
+
+Se entrenan y comparan dos modelos sobre un **split estratificado** 75/25 (`stratify=y`, para que la proporción de fraude sea igual en train y test pese a ser una clase minoritaria del 2%):
+
+- **Regresión Logística** (`class_weight='balanced'`): rápida, interpretable — se puede leer el coeficiente de cada variable directamente.
+- **Random Forest** (`class_weight='balanced'`): no lineal, generalmente más preciso.
+
+🟦 **`class_weight='balanced'`:** con una clase tan minoritaria (2% fraude), un modelo sin este ajuste tiende a "ignorar" la clase rara para maximizar accuracy general (con solo predecir "nunca es fraude" ya se acierta el 98%). Este parámetro penaliza más los errores sobre la clase minoritaria durante el entrenamiento — técnica estándar para datasets desbalanceados.
+
+🟦 **AUC-PR (Average Precision) por sobre AUC-ROC:** con clases muy desbalanceadas, el AUC-ROC puede verse artificialmente alto (hay muchísimos negativos "fáciles" que cualquier modelo descarta bien). El AUC-PR es más informativo porque se enfoca en qué tan bien el modelo distingue los positivos raros — es la métrica recomendada por la literatura de machine learning para este escenario.
+
+**Resultado de esta corrida:**
+
+| Modelo | AUC-ROC | AUC-PR | Precision (fraude) | Recall (fraude) |
+|---|---|---|---|---|
+| Regresión Logística | 0.961 | 0.479 | 21.1% | 90.0% |
+| **Random Forest** | **0.981** | **0.648** | 31.2% | 90.0% |
+
+La variable más importante en ambos modelos es la hora (`hora` + `es_horario_sospechoso` juntas explican ~60% de la importancia en Random Forest) — consistente con que el patrón de fraude inyectado en el Módulo 01 depende fuertemente del horario.
+
+### 5.6 Hallazgo: el modelo de fraude daba 100% de precisión, y eso era una mala señal
+
+Al entrenar por primera vez el modelo supervisado, el resultado fue:
+
+```
+FRAUDE   precision=1.000  recall=1.000  f1-score=1.000
+AUC-ROC: 1.000   AUC-PR: 1.000
+```
+
+**Un clasificador perfecto en un problema de fraude real NO existe.** Esto es una señal de alarma exactamente igual a la del IV sospechoso del scorecard (sección 4.6) — hay que desconfiar de un resultado "demasiado bueno" en vez de festejarlo sin revisar.
+
+**Causa raíz:** en el Módulo 01, las transacciones fraudulentas se generaban con rangos **completamente disjuntos** de las legítimas: fraude solo en horario 1am-5am (legítimas nunca en ese rango), fraude solo por canal APP/Home Banking (legítimas podían ser cualquier canal, pero el solapamiento con fraude en monto+horario ya alcanzaba). Con la hora sola alcanzaba para separar el 100% de los casos — el modelo no estaba "aprendiendo" fraude, estaba memorizando una frontera perfecta que existía por construcción del dataset, no por parecido a la realidad.
+
+**La corrección**, en `generate_synthetic_data.py`:
+
+- El fraude ahora tiene **80% de probabilidad** de ser "vaciado de cuenta" (monto alto) y **20%** de ser *"card testing"* (montos chicos, $50-$2.000 — un patrón real: probar que una tarjeta/cuenta robada funciona antes de un cargo grande).
+- **75%** ocurre de madrugada, **25%** en cualquier horario — el fraude también pasa de día.
+- **85%** por canal digital, **15%** por canal físico (POS/ATM — tarjeta clonada, retiro forzado).
+- Del lado legítimo, se agregó que un **4% de las transacciones normales** también ocurra de madrugada (gente que opera de noche) — así el horario nocturno deja de ser, por sí solo, una señal perfecta.
+- Se inyectó además un patrón de **ráfaga real** (ver `TAMANIO_RAFAGA` en el código): 1 de cada 4 grupos de 5 transacciones fraudulentas se reasigna a un mismo cliente en una ventana de pocos minutos, simulando una toma de cuenta real — sin esto, la regla de `velocity` (5.3) nunca tenía nada que detectar.
+
+**Resultado después del fix:** Random Forest AUC-PR = 0.648 (en vez de 1.000) — un resultado realista, con un trade-off claro entre precision y recall visible en la curva Precision-Recall, exactamente como pasaría con datos reales.
+
+**Efecto colateral encontrado y corregido:** al modificar la sección de transacciones, los resultados de préstamos y scoring (secciones posteriores del mismo script) cambiaron *sin que nadie tocara esa lógica* — porque todas las secciones compartían una única secuencia de números aleatorios. Se corrigió agregando `reseed()` al inicio de cada sección (ver sección 2), para que cada una sea independiente. Este es el motivo por el que los números del Módulo 01 y 02 en este documento se actualizaron una vez más (ver el registro de cambios).
+
+**Cómo contarlo en una entrevista:** *"Cuando mi modelo de fraude dio 100% de precisión y recall, no lo tomé como un éxito — un resultado perfecto en un problema de fraude real es prácticamente siempre una señal de fuga de datos o de un dataset poco realista. Investigué, encontré que mi generador de datos sintéticos creaba una frontera perfectamente separable entre fraude y no-fraude, y lo corregí agregando solapamiento realista entre ambas clases. Después de eso, obtuve un modelo con un AUC-PR de 0.65, mucho más creíble."* Este tipo de escepticismo ante resultados "demasiado buenos" es exactamente lo que se espera de un analista senior.
+
+### 5.7 `alert_system.py` — Orquestación y sistema de alertas
+
+Combina las tres señales (reglas, Isolation Forest, modelo supervisado) en niveles de prioridad, replicando cómo un equipo de fraude organiza su cola de trabajo:
+
+- **CRÍTICA:** el modelo supervisado da probabilidad ≥ 70% → revisar de inmediato.
+- **ALTA:** al menos 2 de las 3 señales coinciden → alta confianza cruzada.
+- **MEDIA:** exactamente 1 señal se disparó → vale la pena mirar, no urgente.
+- **SIN ALERTA:** ninguna señal.
+
+🟦 **`cross_val_predict` para puntuar el 100% de la población:** el modelo de `fraud_model.py` solo predice sobre su 25% de test (para poder medir su performance de forma honesta). Para darle un score a **todas** las transacciones sin el sesgo optimista de "ya las vio en entrenamiento", se usa `cross_val_predict` con 5 folds: cada transacción es puntuada por un modelo que nunca la vio durante su entrenamiento (el mismo principio del train/test split, aplicado a toda la población). Esta es la forma correcta y estándar de generar un score de producción para el 100% de un dataset histórico.
+
+**Resultado de esta corrida — tabla de cobertura acumulada** (equivalente a una *gains table*, técnica estándar para evaluar sistemas de scoring/alertas):
+
+| Prioridad revisada (acumulado) | % del volumen total | % del fraude capturado |
+|---|---|---|
+| CRÍTICA | 3.8% | 82.2% |
+| CRÍTICA + ALTA | 4.4% | 84.2% |
+| CRÍTICA + ALTA + MEDIA | 12.7% | 93.1% |
+| Todo | 100% | 100% |
+
+**Lectura de negocio:** revisando solo el 4.4% del volumen de transacciones (las de prioridad CRÍTICA + ALTA), el equipo de fraude capturaría el 84.2% del fraude total — esto es exactamente el tipo de argumento con el que un analista de riesgo/fraude justifica el dimensionamiento de su equipo frente a la gerencia: no hace falta revisar todo, hace falta revisar bien lo priorizado.
+
+### 5.8 Lo que te pueden preguntar sobre este módulo
+
+| Pregunta | Cómo responder |
+|---|---|
+| "¿Por qué combinar reglas, anomalías y un modelo supervisado en vez de usar solo el mejor?" | "Porque cada uno cubre un punto ciego distinto: las reglas no necesitan etiqueta y son 100% explicables (útil para justificar un rechazo), Isolation Forest detecta patrones nuevos que ningún modelo supervisado vio antes, y el modelo supervisado es el más preciso pero solo aprende lo que ya está etiquetado. En producción se combinan, no se reemplazan entre sí." |
+| "¿Por qué no confiar en un modelo con 100% de precisión?" | "Porque en un problema real de fraude eso casi nunca pasa — es señal de fuga de datos o de que el dataset de entrenamiento no representa bien la superposición real entre fraude y comportamiento legítimo. Me pasó exactamente eso construyendo este proyecto, lo investigué y corregí el dataset sintético para que tuviera solapamiento realista." |
+| "¿Por qué usaste AUC-PR en vez de solo accuracy?" | "Porque con una clase tan minoritaria (2% fraude), un modelo que nunca predice fraude ya tiene 98% de accuracy sin ser útil. AUC-PR (y precision/recall) reflejan mejor qué tan bien se identifica específicamente la clase rara que importa." |
+| "¿Cómo armarías la cola de trabajo de un analista de fraude con recursos limitados?" | "Priorizando por score combinado de varias señales, no revisando todo por igual. En mi caso, con el 4.4% del volumen de mayor prioridad se captura el 84% del fraude total — es el argumento para dimensionar el equipo según ese trade-off." |
+
+---
+
+## 6. Glosario acumulado
 
 | Término | Definición |
 |---|---|
@@ -458,10 +613,19 @@ Gini = 2 × AUC - 1
 | **AUC (Area Under the ROC Curve)** | Métrica de 0 a 1 que mide qué tan bien un modelo ordena a los casos de mejor a peor riesgo (0.5 = azar, 1 = perfecto) |
 | **Gini** | `2×AUC - 1` — otra forma de expresar el poder discriminante de un modelo, común en scorecards |
 | **Fuga de datos (data leakage)** | Cuando una variable usada para entrenar un modelo contiene información que en la práctica no estaría disponible al momento de la predicción (o que ya "conoce" el resultado) — infla artificialmente el poder predictivo aparente |
+| **Velocity check** | Regla que detecta muchas operaciones del mismo cliente en poco tiempo — señal típica de una cuenta comprometida |
+| **Isolation Forest** | Algoritmo de detección de anomalías: aísla cada observación con árboles aleatorios; las anómalas se aíslan con menos particiones que las normales |
+| **Clase desbalanceada** | Cuando una de las clases a predecir es mucho más rara que la otra (ej: 2% fraude vs 98% normal) — requiere métricas y técnicas de entrenamiento distintas a un problema balanceado |
+| **`class_weight='balanced'`** | Parámetro de scikit-learn que penaliza más los errores sobre la clase minoritaria durante el entrenamiento, para que el modelo no la ignore |
+| **Precision** | De todo lo que el modelo marcó como positivo, qué % realmente lo era (`TP / (TP+FP)`) |
+| **Recall** | De todo lo que realmente era positivo, qué % el modelo logró detectar (`TP / (TP+FN)`) |
+| **AUC-PR (Average Precision)** | Área bajo la curva Precision-Recall — métrica recomendada por sobre AUC-ROC cuando la clase positiva es muy minoritaria |
+| **`cross_val_predict`** | Técnica de scikit-learn para obtener una predicción "fuera de muestra" (out-of-fold) para cada fila de un dataset completo, sin el sesgo optimista de haber sido vista en entrenamiento |
+| **Gains table (tabla de ganancias)** | Tabla que muestra qué % de los casos positivos totales se captura revisando el X% superior de un ranking de score — usada para dimensionar equipos de revisión/cobranza/fraude |
 
 ---
 
-## 6. Cómo revisar vos mismo cada módulo
+## 7. Cómo revisar vos mismo cada módulo
 
 Checklist genérico para cualquier módulo nuevo que agreguemos:
 
@@ -473,7 +637,7 @@ Checklist genérico para cualquier módulo nuevo que agreguemos:
 
 ---
 
-## 7. Fuentes y referencias
+## 8. Fuentes y referencias
 
 - **Escala de credit score 300–850:** convención de la industria, popularizada por FICO (Fair Isaac Corporation), ampliamente adaptada por scorecards de bancos y fintechs a nivel global, incluida Latinoamérica.
 - **Umbral de 90 días para NPL:** convención del Acuerdo de Basilea (Basel II/III) y ampliamente usada por reguladores bancarios, incluido el marco de clasificación de deudores de BCRA (que categoriza situación crediticia según días de atraso).
@@ -482,16 +646,21 @@ Checklist genérico para cualquier módulo nuevo que agreguemos:
 - **AUC / Gini como métricas de validación de scorecards:** práctica estándar de la industria de riesgo crediticio y de machine learning para modelos de clasificación binaria.
 - **Distribución Log-Normal para montos financieros:** práctica estándar en econometría financiera para variables monetarias no negativas con asimetría positiva.
 - **Función logística para modelar PD en función del score:** misma familia matemática que usa un modelo de regresión logística real — estándar en modelos de credit scoring.
+- **Isolation Forest:** algoritmo publicado por Liu, Ting & Zhou (2008), implementado en scikit-learn (`sklearn.ensemble.IsolationForest`) — ampliamente usado en detección de fraude y anomalías en la industria.
+- **Precision / Recall / AUC-ROC / AUC-PR / `class_weight` para clases desbalanceadas:** métricas y técnicas estándar de machine learning para clasificación binaria con clases minoritarias, documentadas en la referencia oficial de scikit-learn.
+- **Velocity check, monto atípico, horario sospechoso, canal + monto como señales de fraude:** patrones de detección genuinos usados por sistemas antifraude reales (no inventados para este proyecto).
 - **GAFI / UIF (se detalla en Módulo 04):** Grupo de Acción Financiera Internacional (FATF) — tipologías públicas de lavado de dinero; Unidad de Información Financiera de Argentina (organismo regulador AML local).
 - Todo lo demás (parámetros exactos de las distribuciones, pesos de las categorías) es una **aproximación razonada por mí** para producir un dataset sintético realista, no una cifra tomada de una fuente oficial — se marca como 🟨 en cada sección para que quede explícito.
 
 ---
 
-## 8. Registro de cambios
+## 9. Registro de cambios
 
 | Fecha | Módulo | Cambio |
 |---|---|---|
 | 2026-09-05 | 01 — Data Infrastructure | Documento creado. Módulo 01 completado: schema, generación de datos, data quality checks, ETL. Mejora sobre el instructivo original: se agregó generación de `cuentas` y `scoring_historico` (estaban en el schema pero no en el script original), y se corrigió la asignación de `cuenta_id` en transacciones para que referencie una cuenta real del cliente. |
 | 2026-09-05 | 01 — Data Infrastructure | **Fix post-Módulo 02:** se reemplazó la asignación de estado de mora por umbrales discretos (2-3 baldes) por una función logística continua de PD en función del score. Causa: la PD calculada en el Módulo 02 no era monótona respecto al score (ver sección 3.9). Dataset regenerado; los resultados del Módulo 01 en este documento reflejan la corrida posterior al fix. |
 | 2026-09-05 | 02 — Credit Risk Analytics | Módulo completado: `pd_lgd_ead.py`, `vintage_analysis.py`, `roll_rate_matrix.py`, `credit_scorecard.py` (WOE/IV + regresión logística + escalado a puntos + validación AUC/Gini) y 3 archivos SQL. Todos corridos y validados contra la base real. |
+| 2026-09-05 | 03 — Fraud Detection | Módulo completado: `rule_engine.py`, `anomaly_detection.py`, `fraud_model.py`, `alert_system.py` y 3 archivos SQL. |
+| 2026-09-05 | 01 — Data Infrastructure | **Fix post-Módulo 03:** se detectó que el modelo supervisado de fraude daba 100% de precisión/recall — señal de dataset poco realista (fronteras perfectamente separables entre fraude y no-fraude). Se corrigió `generate_synthetic_data.py` para que el fraude tenga solapamiento realista con transacciones legítimas (monto, horario, canal) y se inyectó un patrón de ráfaga (velocity) real (ver sección 5.6). Se agregó también `reseed()` por sección para desacoplar la aleatoriedad entre secciones del generador (ver sección 2). Dataset regenerado; los resultados de los Módulos 01 y 02 en este documento reflejan la corrida posterior a este fix. |
 
