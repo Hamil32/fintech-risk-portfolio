@@ -761,9 +761,18 @@ Todas las reglas son literales de `decision_rules.json`, no están hardcodeadas 
 
 Ningún director de riesgo abre 4 carpetas de Python para ver cómo está la cartera — quiere **una pantalla**. Este módulo cierra el portfolio consolidando lo que generaron los Módulos 01-04 en un dashboard de Power BI de 4 páginas.
 
-### 8.2 Por qué esta es la única parte que no se generó 100% por código
+### 8.2 Cómo se construyó el modelo: Power BI Modeling MCP Server
 
-Un archivo `.pbix` es un formato binario propietario de Microsoft — no existe forma de "escribirlo" con un script de la misma manera que se genera un CSV o un `.py`. Lo que sí se puede automatizar (y se hizo) es **todo lo previo**: dejar los datos ya consolidados y curados en un esquema listo para importar, y documentar exactamente qué medida DAX y qué visual va en cada página, para que armar el `.pbix` a mano sea un ejercicio de seguir instrucciones, no de empezar de cero.
+Un archivo `.pbix` es un formato binario propietario — no se puede "escribir" con un script de la misma forma que un CSV. Pero eso no significa que todo tenga que hacerse a mano: Microsoft publica el **Power BI Modeling MCP Server**, una extensión de VS Code que expone el motor tabular de una sesión de Power BI Desktop **abierta y corriendo** como un servidor MCP — permitiendo crear tablas, particiones, relaciones y medidas DAX mediante llamadas a herramientas, exactamente como se haría con cualquier otra API.
+
+Se conectó ese MCP a esta sesión de Claude Code (configurado en `.mcp.json`, no versionado por tener una ruta específica de esta máquina) y, con Power BI Desktop abierto con un archivo en blanco, se construyó **el modelo entero por código**:
+
+- Las 6 tablas (`dim_clientes`, `fact_prestamos`, `fact_transacciones`, `dim_vintage`, `fact_roll_rate`, `fact_alertas_aml`), cada una con su consulta Power Query (M) apuntando directo a los CSVs de `data/`.
+- Las 3 relaciones del esquema en estrella.
+- Las 20 medidas DAX de `dax_measures.md`.
+- Cada número se validó con consultas DAX en vivo contra el modelo recién creado, comparándolo con los valores ya documentados en este archivo (ver 8.6) — coincidencia exacta en los 8 KPIs verificados.
+
+**Lo que este MCP NO puede hacer** (y por eso sigue siendo manual): construir las **páginas del reporte** — los visuales, tarjetas y gráficos que ves en pantalla. El MCP opera sobre la capa de **modelo semántico** (TOM — Tabular Object Model), no sobre la capa de **reporte** de un `.pbix`. Por eso `power_bi_build_guide.md` ya no explica cómo importar datos ni armar relaciones (eso está hecho) — se enfoca 100% en qué visual poner en cada página.
 
 ### 8.3 Qué se construyó
 
@@ -801,11 +810,25 @@ ya vienen agregados por cohorte/segmento, no por cliente.
 
 `fact_roll_rate` se generó con `.melt()` de pandas (formato ancho → largo): la matriz de transición del Módulo 02 viene como una tabla de 5×5 (una columna por segmento de destino), pero el visual **Matrix** de Power BI necesita tres columnas (`desde`, `hacia`, `porcentaje`) para poder pivotear él mismo — es el mismo concepto de "tidy data" que dicta cuándo una tabla está en el formato correcto para análisis.
 
-### 8.6 Lo que te pueden preguntar sobre este módulo
+### 8.6 Hallazgos: tres problemas reales al automatizar Power BI
+
+Construir el modelo por MCP no salió bien al primer intento — y los tres problemas que aparecieron son justamente el tipo de cosa que distingue a alguien que probó una herramienta de alguien que la depuró de verdad.
+
+**1. Confirmación silenciosa que nunca se mostraba.** La primera llamada de escritura (`Create` de una tabla) devolvía *"the user requested a write operation but declined when asked to confirm"* — pero no había ningún diálogo visible en ningún lado (ni en VS Code, ni en Power BI Desktop, ni como ventana de Windows). Se investigó en capas: primero se descartó que fuera un permiso de Claude Code sin aprobar (`allowedTools` vacío en la config del proyecto — se agregó una regla explícita en `.claude/settings.local.json`), y cuando eso tampoco alcanzó, se encontró la causa real revisando el `package.json` de la extensión: el propio ejecutable del MCP soporta un flag `--skipconfirmation`, documentado ahí mismo como ejemplo. Sin ese flag, el servidor espera una confirmación por un canal (probablemente elicitation del protocolo MCP) que esta integración cliente-servidor no llegaba a renderizar visualmente — quedaba script pidiendo un "sí" que nadie podía dar. Se agregó el flag a `.mcp.json` y el problema desapareció.
+
+**2. Nombre de partición igual al nombre de tabla.** Al refrescar la primera tabla creada, el motor tiraba: *"No se reconoce el nombre 'Partition_36686F87-...'"* — un GUID que no correspondía a ningún objeto del modelo (se verificó exportando el TMSL completo de la tabla: la consulta M estaba perfecta). La causa apareció al notar que el mismo GUID se repetía en corridas distintas, y que la única partición del modelo tenía el mismo nombre que su tabla contenedora (`dim_vintage` tabla, `dim_vintage` partición) — una colisión de nombres que el motor de Analysis Services de Power BI Desktop resuelve mal en ciertos escenarios de refresh vía API. La solución: nombrar la partición distinto de la tabla (`dim_vintage_partition`), algo que la propia herramienta permite mediante el campo `partitionName` pero que no es obligatorio — y por eso nadie lo nota hasta que falla.
+
+**3. Los números daban ~100 veces más grandes.** Una vez resuelto el refresh, la Cartera Total (EAD) daba $668.207.049.590 en vez de los $7.353.674.329 ya documentados — 91 veces más. La causa: el modelo tiene configurado el idioma español (`language: 3082`, LCID de español), donde la coma es el separador decimal y el punto es separador de miles — exactamente al revés que en los CSVs (generados con pandas, formato "1058425.08"). `Table.TransformColumnTypes` sin especificar cultura usa la cultura del modelo para interpretar los números como texto, así que leía "1058425.08" como "105.842.508" (tratando el punto como separador de miles). La solución: pasar `"en-US"` como tercer argumento de `Table.TransformColumnTypes` en **todas** las conversiones de tipo — esto obliga a Power Query a interpretar los números con la convención de EE.UU. (punto decimal), sin importar el idioma del modelo. Una vez corregido, cada número coincidió exacto con lo documentado (verificado con `FORMAT()` en DAX para evitar ambigüedad de visualización).
+
+🟦 **Por qué este hallazgo es el más valioso de los tres:** un error de localización de números (`,` vs `.`) es silencioso — el refresh no falla, no tira excepción, simplemente carga datos **equivocados que parecen razonables** (un número 100 veces más grande sigue siendo un número plausible a primera vista). Es exactamente el tipo de bug que hay que aprender a sospechar activamente en cualquier pipeline de datos que cruce sistemas con configuraciones regionales distintas — y es la razón por la que cada tabla se validó con una consulta DAX comparada contra el dato fuente antes de darla por buena, en vez de asumir que "cargó sin error" significaba "cargó bien".
+
+### 8.7 Lo que te pueden preguntar sobre este módulo
 
 | Pregunta | Cómo responder |
 |---|---|
-| "¿Por qué no generaste el .pbix directamente?" | "Porque es un formato binario propietario, no se puede generar por script. Automaticé todo lo anterior: la consolidación de datos y la definición exacta de qué medida y qué visual va en cada página, para que armar el dashboard sea mecánico." |
+| "¿Cómo construiste el modelo de Power BI?" | "Con el Power BI Modeling MCP Server de Microsoft, conectado a mi sesión de Claude Code — expone el motor tabular de Power BI Desktop como herramientas que se pueden llamar por código. Armé las 6 tablas, las relaciones y las 20 medidas DAX así, y validé cada número con consultas DAX en vivo contra los valores que ya tenía documentados de los módulos anteriores." |
+| "¿Qué NO se puede automatizar de un dashboard de Power BI?" | "La capa de reporte: los visuales, las páginas, el diseño. El MCP que usé opera sobre el modelo semántico (TOM) — tablas, relaciones, medidas —, no sobre el layout del reporte. Esa parte la armé a mano siguiendo mi propia guía." |
+| "¿Qué bugs encontraste automatizando esto?" | "Tres: una confirmación de escritura que nunca se mostraba visualmente (se resolvía con un flag `--skipconfirmation` documentado en el package.json de la extensión), una colisión de nombre entre tabla y partición que rompía el refresh, y un bug de localización — el modelo interpretaba mis números en formato de punto decimal como si usaran coma decimal, inflándolos ~100 veces. Los encontré porque validé cada carga con una consulta DAX contra el dato fuente, en vez de asumir que si no tiraba error, estaba bien." |
 | "¿Por qué calculás los KPIs con DAX y no en Python?" | "Porque un número precalculado en un CSV congela el dashboard — no se puede filtrar ni cruzar. Con medidas DAX sobre datos de detalle, cualquier segmentador que agregue recalcula el KPI automáticamente. Es la diferencia entre un reporte estático y un dashboard interactivo real." |
 | "¿Qué es un esquema en estrella?" | "Un modelo de datos con una tabla de dimensión central (en mi caso, clientes) rodeada de tablas de hechos (préstamos, transacciones, alertas) — el patrón estándar de modelado para BI, porque hace que las relaciones sean claras y las consultas eficientes." |
 

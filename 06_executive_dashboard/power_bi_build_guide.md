@@ -1,50 +1,19 @@
 # Guía de construcción — Dashboard Ejecutivo en Power BI Desktop
 
-Esta es la única parte del portfolio que no se puede generar por código — hay que armarla a mano en Power BI Desktop. Esta guía te lleva paso a paso: qué importar, qué relaciones armar, y qué visual poner en cada página, con las medidas DAX exactas (en [`dax_measures.md`](dax_measures.md)).
+**El modelo de datos ya está armado.** Las 6 tablas, las 3 relaciones y las 20 medidas DAX se crearon directamente contra el motor de Power BI Desktop usando el **Power BI Modeling MCP Server** (la extensión oficial de Microsoft) conectado a esta sesión de Claude Code — sin pasar por la UI de "Obtener datos" ni escribir DAX a mano. Ver el detalle completo de cómo se hizo (y los problemas que aparecieron en el camino) en [`../BITACORA_TECNICA.md`](../BITACORA_TECNICA.md#8-módulo-06--executive-dashboard).
 
-## Paso 0 — Generar los datos
+Lo único que queda — y es lo único que **no** se puede automatizar por MCP/código — es armar los **visuales de las 4 páginas del reporte**. Esta guía te lleva página por página.
 
-```bash
-# Si no corriste ya los Módulos 01-04, hacelo primero (en orden):
-cd 01_data_infrastructure && python generate_synthetic_data.py && python etl_pipeline.py
-cd ../02_credit_risk && python pd_lgd_ead.py && python vintage_analysis.py && python roll_rate_matrix.py && python credit_scorecard.py
-cd ../03_fraud_detection && python rule_engine.py && python anomaly_detection.py && python fraud_model.py && python alert_system.py
-cd ../04_aml_compliance && python aml_rule_engine.py && python kyc_validator.py
+## Antes de empezar
 
-# Consolidar todo para el dashboard:
-cd ../06_executive_dashboard && python build_dashboard_dataset.py
-```
+Abrí el archivo `.pbix` guardado (ver README del módulo para el nombre/ubicación exacta) y confirmá que el modelo ya esté ahí:
 
-Esto deja 6 CSVs en `06_executive_dashboard/data/`.
+1. Panel **Datos** (a la derecha) → deberías ver 7 tablas: `dim_clientes`, `fact_prestamos`, `fact_transacciones`, `dim_vintage`, `fact_roll_rate`, `fact_alertas_aml`, y `_Medidas` (con las 20 medidas adentro, ícono de calculadora).
+2. Vista **Modelo** (ícono de la izquierda) → deberían verse 3 relaciones conectando `dim_clientes` con las 3 tablas de hechos.
 
-## Paso 1 — Importar los datos a Power BI
+Si por algún motivo el modelo no está, avisame y lo reconstruyo — el proceso es 100% reproducible.
 
-1. Abrí **Power BI Desktop** → **Obtener datos** → **Carpeta**.
-2. Apuntá a `06_executive_dashboard/data/` → **Combinar y transformar** (o importar cada CSV por separado con **Texto/CSV** si preferís más control).
-3. Verificá que Power BI haya detectado bien los tipos de dato — en particular:
-   - `fact_transacciones[fecha]` y `fact_prestamos[fecha_otorgamiento]` deben quedar como **Fecha/Hora**, no texto.
-   - Los campos `monto`, `ead`, `expected_loss`, `pd_asignada`, etc. deben ser **Número decimal**.
-4. **Cerrar y aplicar**.
-
-## Paso 2 — Armar el modelo (relaciones)
-
-Andá a la vista **Modelo** (ícono de la izquierda) y creá estas relaciones (arrastrando de un campo al otro):
-
-| Desde | Hacia | Cardinalidad |
-|---|---|---|
-| `fact_prestamos[cliente_id]` | `dim_clientes[cliente_id]` | Muchos a uno |
-| `fact_transacciones[cliente_id]` | `dim_clientes[cliente_id]` | Muchos a uno |
-| `fact_alertas_aml[cliente_id]` | `dim_clientes[cliente_id]` | Muchos a uno |
-
-`dim_vintage` y `fact_roll_rate` quedan **sin relación** — ya vienen agregados por cohorte/segmento, no por cliente, así que no hace falta vincularlos a nada para usarlos en sus propios visuales.
-
-Esto arma un esquema en estrella simple: `dim_clientes` en el centro, tres tablas de hechos alrededor.
-
-## Paso 3 — Crear las medidas DAX
-
-Copiá todas las medidas de [`dax_measures.md`](dax_measures.md) en una tabla auxiliar `_Medidas` (ver esa guía para el detalle).
-
-## Paso 4 — Las 4 páginas del dashboard
+## Las 4 páginas del dashboard
 
 ### Página 1 — Resumen Ejecutivo
 
@@ -102,7 +71,7 @@ Hora = HOUR(fact_transacciones[fecha])
 | Alertas por segmento de cliente | `fact_alertas_aml[segmento]` × conteo | Gráfico de barras |
 | Distribución de calificación de riesgo AML | `dim_clientes[calificacion_riesgo_aml]` × `DISTINCTCOUNT(dim_clientes[cliente_id])` | Gráfico de torta (BAJO=verde, MEDIO=amarillo, ALTO=rojo) |
 
-## Paso 5 (opcional, para llevarlo más lejos)
+## Para llevarlo más lejos (opcional)
 
 - **Segmentadores (slicers) globales** en cada página: `dim_clientes[segmento]` y un rango de fechas — así el dashboard deja de ser estático y se puede explorar.
 - **Tabla de fechas dedicada:** para que las medidas de tiempo (evolución mensual) funcionen perfecto con Time Intelligence de DAX, creá:

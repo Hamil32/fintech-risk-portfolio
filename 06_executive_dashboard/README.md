@@ -2,7 +2,9 @@
 
 **Objetivo:** consolidar el análisis de los Módulos 01-04 en un dashboard ejecutivo de 4 páginas en Power BI, y cerrar el portfolio con un resumen ejecutivo presentable.
 
-⚠️ **Esta es la única parte del portfolio que no se genera por código.** El archivo `.pbix` de Power BI hay que armarlo manualmente en Power BI Desktop — lo que este módulo entrega es el dataset ya consolidado y una guía exacta (con las medidas DAX) para construirlo.
+✅ **El modelo de datos (tablas, relaciones y 20 medidas DAX) ya está construido** — se armó directamente contra Power BI Desktop usando el [Power BI Modeling MCP Server](https://github.com/microsoft/powerbi-modeling-mcp) de Microsoft, conectado a esta sesión de Claude Code. Cada número se validó contra los valores ya documentados en los Módulos 02-04. Ver el proceso completo (y los 3 bugs que aparecieron en el camino) en [`../BITACORA_TECNICA.md`](../BITACORA_TECNICA.md#8-módulo-06--executive-dashboard).
+
+⚠️ **Lo único que sigue siendo manual:** las páginas del **reporte** (los visuales que ves en pantalla) — el MCP opera sobre el modelo semántico, no sobre el layout del reporte. Ese es el objetivo de `power_bi_build_guide.md`.
 
 > 📘 Ver el KPI de cada módulo explicado con su fórmula en [`kpis_financieros.md`](kpis_financieros.md).
 > 📄 Ver el resumen ejecutivo de todo el portfolio en [`portfolio_presentation.md`](portfolio_presentation.md).
@@ -25,7 +27,9 @@ cd 06_executive_dashboard
 python build_dashboard_dataset.py    # Consolida todo en data/ (6 CSVs)
 ```
 
-Después, abrí Power BI Desktop y seguí [`power_bi_build_guide.md`](power_bi_build_guide.md) paso a paso.
+El modelo ya construido vive en el `.pbix` guardado localmente (no se sube a git — es un archivo binario grande y específico de esta máquina). Si necesitás reconstruirlo desde cero, `build_dashboard_dataset.py` deja los CSVs listos y el proceso vía MCP es 100% reproducible (ver Bitácora Técnica).
+
+Abrí el `.pbix` en Power BI Desktop y seguí [`power_bi_build_guide.md`](power_bi_build_guide.md) para armar los visuales de las 4 páginas.
 
 ## Archivos
 

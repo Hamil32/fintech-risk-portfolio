@@ -29,5 +29,9 @@ __pycache__/
 # VS Code
 .vscode/
 
+# Configuración local de MCP y permisos (rutas/decisiones específicas de esta máquina, no se comparte)
+.mcp.json
+.claude/settings.local.json
+
 # Power BI (los .pbix son binarios, subir solo si son livianos)
 # *.pbix

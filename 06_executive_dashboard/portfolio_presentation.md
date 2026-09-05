@@ -30,6 +30,7 @@ Un sistema de análisis de riesgo, fraude, AML y decisión crediticia construido
 - Detectar tipologías AML reales (structuring, round-tripping) modelando el problema correctamente — incluyendo extender el modelo de datos cuando encontré que era necesario.
 - Construir y testear una API REST (FastAPI + pytest) que conecta el análisis de riesgo a una decisión operativa real.
 - **Encontrar y corregir mis propios errores de forma metódica**: un scorecard con IV sospechoso, una PD no monótona, un modelo de fraude con 100% de precisión (señal de fuga de datos, no de éxito) — documentados en detalle en la Bitácora Técnica, porque ese proceso de detectar y corregir es tan valioso como el resultado final.
+- **Automatizar herramientas más allá del código**: construí el modelo semántico completo de Power BI (tablas, relaciones, 20 medidas DAX) por API usando el Power BI Modeling MCP Server de Microsoft, en vez de armarlo a mano — y diagnostiqué y corregí 3 bugs reales en el proceso (un flag de confirmación no documentado, una colisión de nombres en particiones, un bug de localización numérica que inflaba los datos 100x).
 
 ## Cómo navegar el repositorio
 
