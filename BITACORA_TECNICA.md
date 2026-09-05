@@ -16,10 +16,11 @@ Este documento se actualiza a medida que avanzamos de módulo. No reemplaza al [
 3. [Módulo 01 — Data Infrastructure](#3-módulo-01--data-infrastructure)
 4. [Módulo 02 — Credit Risk Analytics](#4-módulo-02--credit-risk-analytics)
 5. [Módulo 03 — Fraud Detection](#5-módulo-03--fraud-detection)
-6. [Glosario acumulado](#6-glosario-acumulado)
-7. [Cómo revisar vos mismo cada módulo](#7-cómo-revisar-vos-mismo-cada-módulo)
-8. [Fuentes y referencias](#8-fuentes-y-referencias)
-9. [Registro de cambios](#9-registro-de-cambios)
+6. [Módulo 04 — AML / Compliance](#6-módulo-04--aml--compliance)
+7. [Glosario acumulado](#7-glosario-acumulado)
+8. [Cómo revisar vos mismo cada módulo](#8-cómo-revisar-vos-mismo-cada-módulo)
+9. [Fuentes y referencias](#9-fuentes-y-referencias)
+10. [Registro de cambios](#10-registro-de-cambios)
 
 ---
 
@@ -78,7 +79,7 @@ clientes (1) ──< (N) scoring_historico
 |---|---|---|
 | **clientes** | La persona/empresa titular de la relación con el banco | `segmento` (RETAIL/PYME/CORPORATIVO) es la primera variable que cualquier banco usa para diferenciar política de riesgo — un corporativo se evalúa distinto que una persona física. `score_inicial` (300–850) es el score crediticio base del cliente. |
 | **cuentas** | Los productos transaccionales del cliente | `tipo_cuenta` distingue CC (cuenta corriente, típicamente pymes/empresas), CA (caja de ahorro, retail) y TARJETA (línea de crédito revolving, con saldo negativo = deuda consumida). |
-| **transacciones** | Cada movimiento de dinero | `es_fraude` es el "ground truth" (la etiqueta real) que en Módulo 03 se va a usar para *evaluar* qué tan bueno es el motor de detección — en la vida real esta etiqueta la generan las disputas/chargebacks confirmados, acá la simulamos nosotros. |
+| **transacciones** | Cada movimiento de dinero | `es_fraude` es el "ground truth" (la etiqueta real) que en Módulo 03 se va a usar para *evaluar* qué tan bueno es el motor de detección — en la vida real esta etiqueta la generan las disputas/chargebacks confirmados, acá la simulamos nosotros. `cuenta_destino_id`/`cliente_destino_id` (solo en TRANSFERENCIA) se agregaron más adelante, para el Módulo 04 — ver sección 6.2. |
 | **prestamos** | Cada línea de crédito otorgada | `estado` y `dias_mora` son el corazón del Módulo 02 (riesgo crediticio): de acá sale el cálculo de PD, NPL, vintage, etc. |
 | **scoring_historico** | La evolución del score de cada cliente en el tiempo | Sin esto no se podría hacer un análisis de *cómo cambia el riesgo de un cliente*, algo que todo banco monitorea (re-scoring periódico). |
 
@@ -477,16 +478,18 @@ Cuatro reglas, cada una con su propia lógica:
 **Resultado de esta corrida:**
 
 ```
-Flags generados (score_reglas >= 2): 770 de 50.000 (1.54%)
+Flags generados (score_reglas >= 2): 714 de 50.000 (1.43%)
   flag_velocity:              72   (0.14%)
-  flag_monto_atipico:        524   (1.05%)
-  flag_horario_sospechoso: 2.308   (4.62%)
-  flag_digital_monto_alto: 3.355   (6.71%)
+  flag_monto_atipico:        516   (1.03%)
+  flag_horario_sospechoso: 2.315   (4.63%)
+  flag_digital_monto_alto: 3.362   (6.72%)
 
-Precision: 0.490  (de cada 100 alertas, 49 son fraude real)
-Recall:    0.377  (detecta el 37.7% de los fraudes reales)
-F1-Score:  0.426
+Precision: 0.507  (de cada 100 alertas, 50.7 son fraude real)
+Recall:    0.362  (detecta el 36.2% de los fraudes reales)
+F1-Score:  0.422
 ```
+
+> Nota: estos números (y los de `anomaly_detection.py`/`fraud_model.py`/`alert_system.py` más abajo) se recalcularon después de extender el Módulo 01 para el Módulo 04 — algunas transacciones legítimas se reasignaron a patrones AML (montos grandes de round-tripping, ráfagas de cash-intensive), lo que mueve levemente algunos falsos positivos de las reglas de fraude. El cambio es menor (±1-2 puntos porcentuales) y no afecta ninguna conclusión.
 
 ### 5.4 `anomaly_detection.py` — Isolation Forest
 
@@ -499,11 +502,11 @@ A diferencia de las reglas, este modelo **no usa la etiqueta `es_fraude` para en
 **Resultado de esta corrida:**
 
 ```
-Isolation Forest  -> Precision: 0.081  Recall: 0.081  F1: 0.081
-Z-score simple     -> Precision: 0.056  Recall: 0.056  F1: 0.056
+Isolation Forest  -> Precision: 0.085  Recall: 0.085  F1: 0.085
+Z-score simple     -> Precision: 0.047  Recall: 0.047  F1: 0.047
 ```
 
-Un resultado **modesto y honesto**: sin la etiqueta, el modelo tiene mucho más trabajo para encontrar el patrón de fraude que las reglas (F1=0.43) o el modelo supervisado (ver 5.5). Esto **no es una falla del código** — es la realidad de la detección de anomalías: funciona mejor para encontrar patrones *nuevos* que nadie etiquetó todavía, no para igualar la precisión de un modelo que sí conoce la respuesta. Vale la pena decir esto exactamente así en una entrevista: demuestra que entendés el trade-off real entre ambos enfoques, en vez de mostrar solo el número más lindo.
+Un resultado **modesto y honesto**: sin la etiqueta, el modelo tiene mucho más trabajo para encontrar el patrón de fraude que las reglas (F1=0.42) o el modelo supervisado (ver 5.5). Esto **no es una falla del código** — es la realidad de la detección de anomalías: funciona mejor para encontrar patrones *nuevos* que nadie etiquetó todavía, no para igualar la precisión de un modelo que sí conoce la respuesta. Vale la pena decir esto exactamente así en una entrevista: demuestra que entendés el trade-off real entre ambos enfoques, en vez de mostrar solo el número más lindo.
 
 ### 5.5 `fraud_model.py` — Modelo supervisado
 
@@ -520,8 +523,8 @@ Se entrenan y comparan dos modelos sobre un **split estratificado** 75/25 (`stra
 
 | Modelo | AUC-ROC | AUC-PR | Precision (fraude) | Recall (fraude) |
 |---|---|---|---|---|
-| Regresión Logística | 0.961 | 0.479 | 21.1% | 90.0% |
-| **Random Forest** | **0.981** | **0.648** | 31.2% | 90.0% |
+| Regresión Logística | 0.941 | 0.450 | 19.2% | 83.6% |
+| **Random Forest** | **0.957** | **0.568** | 27.2% | 85.6% |
 
 La variable más importante en ambos modelos es la hora (`hora` + `es_horario_sospechoso` juntas explican ~60% de la importancia en Random Forest) — consistente con que el patrón de fraude inyectado en el Módulo 01 depende fuertemente del horario.
 
@@ -546,7 +549,7 @@ AUC-ROC: 1.000   AUC-PR: 1.000
 - Del lado legítimo, se agregó que un **4% de las transacciones normales** también ocurra de madrugada (gente que opera de noche) — así el horario nocturno deja de ser, por sí solo, una señal perfecta.
 - Se inyectó además un patrón de **ráfaga real** (ver `TAMANIO_RAFAGA` en el código): 1 de cada 4 grupos de 5 transacciones fraudulentas se reasigna a un mismo cliente en una ventana de pocos minutos, simulando una toma de cuenta real — sin esto, la regla de `velocity` (5.3) nunca tenía nada que detectar.
 
-**Resultado después del fix:** Random Forest AUC-PR = 0.648 (en vez de 1.000) — un resultado realista, con un trade-off claro entre precision y recall visible en la curva Precision-Recall, exactamente como pasaría con datos reales.
+**Resultado después del fix:** Random Forest AUC-PR = 0.568 (en vez de 1.000) — un resultado realista, con un trade-off claro entre precision y recall visible en la curva Precision-Recall, exactamente como pasaría con datos reales.
 
 **Efecto colateral encontrado y corregido:** al modificar la sección de transacciones, los resultados de préstamos y scoring (secciones posteriores del mismo script) cambiaron *sin que nadie tocara esa lógica* — porque todas las secciones compartían una única secuencia de números aleatorios. Se corrigió agregando `reseed()` al inicio de cada sección (ver sección 2), para que cada una sea independiente. Este es el motivo por el que los números del Módulo 01 y 02 en este documento se actualizaron una vez más (ver el registro de cambios).
 
@@ -567,12 +570,12 @@ Combina las tres señales (reglas, Isolation Forest, modelo supervisado) en nive
 
 | Prioridad revisada (acumulado) | % del volumen total | % del fraude capturado |
 |---|---|---|
-| CRÍTICA | 3.8% | 82.2% |
-| CRÍTICA + ALTA | 4.4% | 84.2% |
-| CRÍTICA + ALTA + MEDIA | 12.7% | 93.1% |
+| CRÍTICA | 3.6% | 81.7% |
+| CRÍTICA + ALTA | 4.0% | 81.9% |
+| CRÍTICA + ALTA + MEDIA | 12.1% | 92.4% |
 | Todo | 100% | 100% |
 
-**Lectura de negocio:** revisando solo el 4.4% del volumen de transacciones (las de prioridad CRÍTICA + ALTA), el equipo de fraude capturaría el 84.2% del fraude total — esto es exactamente el tipo de argumento con el que un analista de riesgo/fraude justifica el dimensionamiento de su equipo frente a la gerencia: no hace falta revisar todo, hace falta revisar bien lo priorizado.
+**Lectura de negocio:** revisando solo el 4.0% del volumen de transacciones (las de prioridad CRÍTICA + ALTA), el equipo de fraude capturaría el 81.9% del fraude total — esto es exactamente el tipo de argumento con el que un analista de riesgo/fraude justifica el dimensionamiento de su equipo frente a la gerencia: no hace falta revisar todo, hace falta revisar bien lo priorizado.
 
 ### 5.8 Lo que te pueden preguntar sobre este módulo
 
@@ -581,11 +584,96 @@ Combina las tres señales (reglas, Isolation Forest, modelo supervisado) en nive
 | "¿Por qué combinar reglas, anomalías y un modelo supervisado en vez de usar solo el mejor?" | "Porque cada uno cubre un punto ciego distinto: las reglas no necesitan etiqueta y son 100% explicables (útil para justificar un rechazo), Isolation Forest detecta patrones nuevos que ningún modelo supervisado vio antes, y el modelo supervisado es el más preciso pero solo aprende lo que ya está etiquetado. En producción se combinan, no se reemplazan entre sí." |
 | "¿Por qué no confiar en un modelo con 100% de precisión?" | "Porque en un problema real de fraude eso casi nunca pasa — es señal de fuga de datos o de que el dataset de entrenamiento no representa bien la superposición real entre fraude y comportamiento legítimo. Me pasó exactamente eso construyendo este proyecto, lo investigué y corregí el dataset sintético para que tuviera solapamiento realista." |
 | "¿Por qué usaste AUC-PR en vez de solo accuracy?" | "Porque con una clase tan minoritaria (2% fraude), un modelo que nunca predice fraude ya tiene 98% de accuracy sin ser útil. AUC-PR (y precision/recall) reflejan mejor qué tan bien se identifica específicamente la clase rara que importa." |
-| "¿Cómo armarías la cola de trabajo de un analista de fraude con recursos limitados?" | "Priorizando por score combinado de varias señales, no revisando todo por igual. En mi caso, con el 4.4% del volumen de mayor prioridad se captura el 84% del fraude total — es el argumento para dimensionar el equipo según ese trade-off." |
+| "¿Cómo armarías la cola de trabajo de un analista de fraude con recursos limitados?" | "Priorizando por score combinado de varias señales, no revisando todo por igual. En mi caso, con el 4% del volumen de mayor prioridad se captura el 82% del fraude total — es el argumento para dimensionar el equipo según ese trade-off." |
 
 ---
 
-## 6. Glosario acumulado
+## 6. Módulo 04 — AML / Compliance
+
+### 6.1 Qué problema de negocio resuelve
+
+Un banco está obligado por ley a monitorear su cartera en busca de señales de lavado de activos, y a reportar lo sospechoso a la UIF (en Argentina) mediante un ROS. Este módulo construye ese monitoreo: detecta 4 tipologías reconocidas por GAFI, califica el riesgo AML de cada cliente (un proceso llamado KYC — *Know Your Customer*), y genera el borrador del documento que un analista de Compliance presentaría.
+
+### 6.2 Extensión al modelo de datos: por qué hizo falta tocar el Módulo 01 otra vez
+
+Antes de escribir una sola línea de detección, hubo que resolver un problema de datos: **round-tripping y layering son patrones de flujo de fondos entre cuentas** — por definición, involucran más de una parte. La tabla `transacciones` del Módulo 01 no tenía ningún campo para saber **a quién** iba una transferencia, solo de quién salía. Sin esa información, es matemáticamente imposible reconstruir una cadena A→B→C→A.
+
+**Solución:** se agregaron dos columnas nuevas a `transacciones` — `cuenta_destino_id` y `cliente_destino_id` — pobladas únicamente para transacciones de tipo `TRANSFERENCIA` (NULL en el resto, que no tienen una "contraparte" identificable en este modelo). El 25% de las transferencias van a otra cuenta del mismo cliente (movimiento legítimo entre productos propios); el resto, a un cliente elegido al azar. Ver el detalle completo (y por qué directamente se decidió esto, en vez de dejarlo como limitación) en `aml_typologies.md`.
+
+🟦 **Real:** este es exactamente el tipo de campo que cualquier core bancario real tiene modelado desde el día uno (una transferencia SIEMPRE tiene cuenta origen y cuenta destino) — la limitación original era una simplificación del dataset sintético, no una limitación real de cómo se estructuran los datos bancarios.
+
+**Patrones inyectados deliberadamente** (mismo criterio que en el Módulo 03: sin inyectarlos, la probabilidad de que aparezcan por azar con ~10 transacciones/cliente/año es prácticamente nula):
+
+| Patrón | Cómo se construyó |
+|---|---|
+| **Structuring** | 15 casos: un cliente con 6 transacciones de $7.000-$9.800 el mismo día |
+| **Round-tripping** | 12 anillos de 3 clientes (A→B→C→A) en una ventana de días, con el monto reduciéndose 3-10% en cada salto ("comisión" del circuito) |
+| **Cash-intensive** | 10 casos: un cliente con 9 extracciones de $60.000-$120.000 en una ventana de 30 días |
+| **Actividad inusual** | No se inyectó — emerge naturalmente del z-score sobre datos generados sin intervención (5 casos encontrados) |
+
+### 6.3 `aml_rule_engine.py` — Las 4 tipologías
+
+**Structuring:** igual lógica que en el instructivo original — agrupar transacciones por cliente y día, quedarse con los grupos de ≥5 transacciones bajo el umbral ($10.000 🟨 ilustrativo) cuya suma sí lo supere.
+
+**Round-tripping — la parte técnicamente más interesante del módulo:** se arma con **2 self-joins encadenados** sobre la tabla de transferencias:
+
+```
+e1: A -> B (transacción 1)
+e2: B -> C (transacción 2, con B = destino de e1, fecha >= fecha de e1)
+e3: C -> A (transacción 3, cierra el círculo: destino de e2 = origen de e1)
+```
+
+Con la restricción de que las 3 transacciones caigan dentro de una ventana de 10 días. 🟦 **Real:** esto es, en esencia, una **detección de ciclos en un grafo dirigido** (cada cliente es un nodo, cada transferencia una arista) restringida a ciclos de longitud 3 — el mismo principio que usan herramientas de análisis de grafos AML más sofisticadas (que en la industria se implementan con motores de grafos dedicados como Neo4j, no con self-joins de SQL/pandas, pero la lógica conceptual es la misma). Con solo 3 nodos por ciclo y una ventana de tiempo acotada, resolverlo con self-joins es perfectamente viable y mucho más simple de mantener.
+
+**Actividad inusual:** mismo z-score mensual por cliente que ya se usó en el Módulo 03 (z-score de volumen sobre el propio historial) — el mismo concepto estadístico reaparece porque, en el fondo, "esto es raro para este cliente" es la pregunta central de casi todo el análisis de riesgo/fraude/AML.
+
+**Cash-intensive:** 🟨 **adaptación reconocida:** el schema no modela depósitos en efectivo como un tipo de transacción separado, así que se usa `EXTRACCION` (retiro) de alta frecuencia (≥8 en 30 días) y monto (>$500.000) como proxy — ver `aml_typologies.md` para la aclaración completa de esta limitación.
+
+**Resultado de esta corrida:** los 4 detectores encuentran **exactamente** los casos inyectados (15/15 structuring, 12/12 round-tripping, 10/10 cash-intensive) más 5 casos de actividad inusual que emergieron sin inyección — la mejor prueba posible de que la lógica de detección es correcta: recupera al 100% lo que se sabe que está ahí.
+
+```
+Total alertas: 42
+  STRUCTURING:        15
+  ROUND_TRIPPING:     12
+  CASH_INTENSIVE:     10
+  ACTIVIDAD_INUSUAL:   5
+
+Por nivel de riesgo: ALTO=27, MEDIO=15
+Por segmento: RETAIL=36, PYME=4, CORPORATIVO=2
+```
+
+### 6.4 `kyc_validator.py` — Completitud KYC y calificación de riesgo
+
+Dos partes:
+
+1. **Completitud de datos** ("KYC de formulario"): formato de DNI, edad en rango legal, provincia válida, score en rango. En este dataset sintético dio 100% completo (5.000/5.000) porque se generó sin errores deliberados — 🟨 en un dataset real, este chequeo casi nunca da 100%, y es habitual encontrar entre 2-5% de fichas con algún dato faltante o inconsistente.
+
+2. **Señal "huella chica, volumen alto":** un cliente PYME/CORPORATIVO con **una sola cuenta** pero un volumen transaccional muy por encima del promedio de su propio segmento (z-score > 2, comparado *dentro* del segmento, no contra toda la cartera — comparar una PYME contra RETAIL no tendría sentido, las escalas de monto son completamente distintas). 🟦 **Real:** esta es una señal genuina de AML — las empresas de fachada suelen tener una estructura societaria/operativa mínima pero mover mucho dinero, precisamente porque su función es "lavar", no operar un negocio real.
+
+**Calificación final** (regla simple, combinando alertas + señal de huella chica + segmento):
+
+```
+BAJO:   3.955 clientes
+MEDIO:  1.014 clientes
+ALTO:      31 clientes
+```
+
+### 6.5 `sar_report_generator.py` — Borradores de ROS
+
+Toma los 27 casos de riesgo ALTO y genera un documento markdown con la estructura narrativa estándar de un ROS: identificación del sujeto, tipología GAFI aplicable, descripción de la operación, fundamento de la sospecha y recomendación. 🟦 **Real:** esta es la estructura conceptual que sigue cualquier ROS — identificación, hechos, tipología, fundamento, recomendación — aunque el formulario formal de la UIF tiene sus propios campos específicos que este borrador no reemplaza (el script lo dice explícitamente en su docstring: es un acelerador del trabajo del analista, no un reemplazo del circuito de aprobación interno).
+
+### 6.6 Lo que te pueden preguntar sobre este módulo
+
+| Pregunta | Cómo responder |
+|---|---|
+| "¿Cómo detectarías round-tripping?" | "Es un problema de detección de ciclos en un grafo de transferencias: modelo cada cliente como nodo y cada transferencia como arista dirigida, y busco ciclos cortos (A→B→C→A) dentro de una ventana de tiempo acotada. Lo implementé con self-joins encadenados en pandas/SQL, aunque en una escala más grande se resolvería con un motor de grafos dedicado." |
+| "¿Qué es el ROS y cuándo se presenta?" | "Reporte de Operación Sospechosa — el documento que un sujeto obligado presenta a la UIF cuando detecta una operación que no puede justificar con el perfil conocido del cliente. Automaticé la generación del borrador narrativo a partir de las alertas detectadas, aunque la decisión final de presentarlo es de Compliance, no del sistema." |
+| "¿Qué es KYC?" | "Know Your Customer — el proceso de verificar la identidad y el perfil de riesgo de un cliente antes y durante la relación comercial. Implementé validaciones de completitud de datos y una calificación de riesgo AML combinando señales como alertas asociadas y desproporción entre huella operativa (cantidad de cuentas) y volumen transaccional." |
+| "¿Por qué tuviste que modificar el generador de datos del Módulo 01 para este módulo?" | "Porque round-tripping requiere saber la contraparte de cada transferencia, y mi modelo de datos original no la registraba — es una limitación real que encontré al intentar implementar la detección, así que extendí el schema con `cuenta_destino_id`/`cliente_destino_id` antes de seguir." |
+
+---
+
+## 7. Glosario acumulado
 
 | Término | Definición |
 |---|---|
@@ -622,10 +710,19 @@ Combina las tres señales (reglas, Isolation Forest, modelo supervisado) en nive
 | **AUC-PR (Average Precision)** | Área bajo la curva Precision-Recall — métrica recomendada por sobre AUC-ROC cuando la clase positiva es muy minoritaria |
 | **`cross_val_predict`** | Técnica de scikit-learn para obtener una predicción "fuera de muestra" (out-of-fold) para cada fila de un dataset completo, sin el sesgo optimista de haber sido vista en entrenamiento |
 | **Gains table (tabla de ganancias)** | Tabla que muestra qué % de los casos positivos totales se captura revisando el X% superior de un ranking de score — usada para dimensionar equipos de revisión/cobranza/fraude |
+| **AML (Anti-Money Laundering)** | Prevención de lavado de activos — el conjunto de controles que un banco debe tener para detectar y reportar operaciones sospechosas |
+| **Structuring / Smurfing** | Fraccionar una operación grande en varias chicas, cada una bajo el umbral de reporte, para evitar que sea detectada |
+| **Round-tripping** | Circuito de transferencias que sale de una cuenta, pasa por terceros, y vuelve al originante — oculta el origen aparente de los fondos |
+| **Layering** | Múltiples transferencias entre cuentas para dificultar el rastreo del origen del dinero (concepto relacionado con round-tripping, con cadenas más largas/complejas) |
+| **ROS (Reporte de Operación Sospechosa)** | Documento formal que un banco presenta a la UIF cuando detecta una operación que no puede justificar con el perfil conocido del cliente |
+| **UIF (Unidad de Información Financiera)** | Organismo regulador argentino que recibe los ROS y coordina la prevención de lavado de activos a nivel nacional |
+| **GAFI / FATF** | Grupo de Acción Financiera Internacional — organismo que define los estándares globales AML y publica tipologías de referencia |
+| **KYC (Know Your Customer)** | Proceso de verificar la identidad y el perfil de riesgo de un cliente, tanto al inicio de la relación como durante toda su vigencia |
+| **Detección de ciclos en un grafo** | Técnica para encontrar cadenas cerradas (A→B→C→A) en una red de relaciones dirigidas — la base algorítmica del round-tripping/layering |
 
 ---
 
-## 7. Cómo revisar vos mismo cada módulo
+## 8. Cómo revisar vos mismo cada módulo
 
 Checklist genérico para cualquier módulo nuevo que agreguemos:
 
@@ -637,7 +734,7 @@ Checklist genérico para cualquier módulo nuevo que agreguemos:
 
 ---
 
-## 8. Fuentes y referencias
+## 9. Fuentes y referencias
 
 - **Escala de credit score 300–850:** convención de la industria, popularizada por FICO (Fair Isaac Corporation), ampliamente adaptada por scorecards de bancos y fintechs a nivel global, incluida Latinoamérica.
 - **Umbral de 90 días para NPL:** convención del Acuerdo de Basilea (Basel II/III) y ampliamente usada por reguladores bancarios, incluido el marco de clasificación de deudores de BCRA (que categoriza situación crediticia según días de atraso).
@@ -649,12 +746,14 @@ Checklist genérico para cualquier módulo nuevo que agreguemos:
 - **Isolation Forest:** algoritmo publicado por Liu, Ting & Zhou (2008), implementado en scikit-learn (`sklearn.ensemble.IsolationForest`) — ampliamente usado en detección de fraude y anomalías en la industria.
 - **Precision / Recall / AUC-ROC / AUC-PR / `class_weight` para clases desbalanceadas:** métricas y técnicas estándar de machine learning para clasificación binaria con clases minoritarias, documentadas en la referencia oficial de scikit-learn.
 - **Velocity check, monto atípico, horario sospechoso, canal + monto como señales de fraude:** patrones de detección genuinos usados por sistemas antifraude reales (no inventados para este proyecto).
-- **GAFI / UIF (se detalla en Módulo 04):** Grupo de Acción Financiera Internacional (FATF) — tipologías públicas de lavado de dinero; Unidad de Información Financiera de Argentina (organismo regulador AML local).
+- **GAFI / UIF:** Grupo de Acción Financiera Internacional (FATF) — tipologías públicas de lavado de dinero, [fatf-gafi.org](https://www.fatf-gafi.org); Unidad de Información Financiera de Argentina (organismo regulador AML local), [argentina.gob.ar/uif](https://www.argentina.gob.ar/uif).
+- **Structuring, round-tripping, actividad inusual, cash-intensive:** tipologías de lavado de dinero públicamente documentadas por GAFI y por informes de tipologías de UIF — no inventadas para este proyecto.
+- **Detección de ciclos en grafos dirigidos:** fundamento algorítmico estándar de ciencia de la computación (teoría de grafos), aplicado acá a un caso de uso AML mediante self-joins en vez de una librería de grafos dedicada.
 - Todo lo demás (parámetros exactos de las distribuciones, pesos de las categorías) es una **aproximación razonada por mí** para producir un dataset sintético realista, no una cifra tomada de una fuente oficial — se marca como 🟨 en cada sección para que quede explícito.
 
 ---
 
-## 9. Registro de cambios
+## 10. Registro de cambios
 
 | Fecha | Módulo | Cambio |
 |---|---|---|
@@ -663,4 +762,6 @@ Checklist genérico para cualquier módulo nuevo que agreguemos:
 | 2026-09-05 | 02 — Credit Risk Analytics | Módulo completado: `pd_lgd_ead.py`, `vintage_analysis.py`, `roll_rate_matrix.py`, `credit_scorecard.py` (WOE/IV + regresión logística + escalado a puntos + validación AUC/Gini) y 3 archivos SQL. Todos corridos y validados contra la base real. |
 | 2026-09-05 | 03 — Fraud Detection | Módulo completado: `rule_engine.py`, `anomaly_detection.py`, `fraud_model.py`, `alert_system.py` y 3 archivos SQL. |
 | 2026-09-05 | 01 — Data Infrastructure | **Fix post-Módulo 03:** se detectó que el modelo supervisado de fraude daba 100% de precisión/recall — señal de dataset poco realista (fronteras perfectamente separables entre fraude y no-fraude). Se corrigió `generate_synthetic_data.py` para que el fraude tenga solapamiento realista con transacciones legítimas (monto, horario, canal) y se inyectó un patrón de ráfaga (velocity) real (ver sección 5.6). Se agregó también `reseed()` por sección para desacoplar la aleatoriedad entre secciones del generador (ver sección 2). Dataset regenerado; los resultados de los Módulos 01 y 02 en este documento reflejan la corrida posterior a este fix. |
+| 2026-09-05 | 04 — AML / Compliance | Módulo completado: `aml_rule_engine.py` (structuring, round-tripping vía self-joins, actividad inusual, cash-intensive), `kyc_validator.py`, `sar_report_generator.py`, `aml_typologies.md`, `compliance_report_template.md` y 3 archivos SQL. |
+| 2026-09-05 | 01 — Data Infrastructure | **Extensión para Módulo 04:** se agregaron las columnas `cuenta_destino_id`/`cliente_destino_id` a `transacciones` (solo pobladas en TRANSFERENCIA) — sin ellas no se puede detectar round-tripping/layering, que son patrones de flujo de fondos entre partes (ver sección 6.2). Se inyectaron además patrones deliberados de structuring (15 casos), round-tripping (12 anillos) y cash-intensive (10 casos). Dataset regenerado; los números de los Módulos 01-03 en este documento reflejan la corrida posterior a esta extensión (cambios menores, ±1-2 puntos porcentuales en las métricas del Módulo 03). |
 

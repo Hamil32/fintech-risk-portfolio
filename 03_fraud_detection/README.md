@@ -40,10 +40,10 @@ python alert_system.py        # Orquestación: combina las 3 señales en una col
 
 | Técnica | Precision | Recall | F1 / AUC-PR |
 |---|---|---|---|
-| Motor de reglas | 49.0% | 37.7% | F1 = 0.43 |
-| Isolation Forest (no supervisado) | 8.1% | 8.1% | F1 = 0.08 |
-| Random Forest (supervisado) | — | 90% @ precision 31% | AUC-PR = 0.65 |
-| **Sistema de alertas combinado** | revisando solo el 4.4% del volumen (CRÍTICA+ALTA) | **captura 84.2% del fraude total** | — |
+| Motor de reglas | 50.7% | 36.2% | F1 = 0.42 |
+| Isolation Forest (no supervisado) | 8.5% | 8.5% | F1 = 0.09 |
+| Random Forest (supervisado) | 27.2% | 85.6% | AUC-PR = 0.57 |
+| **Sistema de alertas combinado** | revisando solo el 4.0% del volumen (CRÍTICA+ALTA) | **captura 81.9% del fraude total** | — |
 
 ## Salidas (en `output/`, CSVs ignorados por git)
 

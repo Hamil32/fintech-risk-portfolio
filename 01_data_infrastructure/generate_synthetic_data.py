@@ -192,10 +192,28 @@ for i in range(N_TRANSACCIONES):
     fecha_base = FECHA_INICIO + timedelta(days=random.randint(0, 364))
     fecha = fecha_base.replace(hour=hora, minute=random.randint(0, 59), second=random.randint(0, 59))
 
+    # Las TRANSFERENCIA son las únicas transacciones con una contraparte
+    # identificable (cuenta/cliente destino) — sin esto no se puede detectar
+    # de verdad ningún patrón AML de flujo de fondos (round-tripping,
+    # layering), que por definición involucran MÁS de una cuenta.
+    cuenta_destino_id, cliente_destino_id = None, None
+    if tipo == 'TRANSFERENCIA':
+        opciones_propias = [c for c in cuentas_por_cliente[cliente_id] if c != cuenta_id_tx]
+        # 25% transferencia entre cuentas propias del mismo cliente (legítimo:
+        # mover plata de la CA a la tarjeta, por ejemplo)
+        if opciones_propias and random.random() < 0.25:
+            cuenta_destino_id = random.choice(opciones_propias)
+            cliente_destino_id = cliente_id
+        else:
+            cliente_destino_id = random.randint(1, N_CLIENTES)
+            cuenta_destino_id = random.choice(cuentas_por_cliente[cliente_destino_id])
+
     transacciones.append({
         'transaccion_id': i + 1,
         'cuenta_id': cuenta_id_tx,
         'cliente_id': cliente_id,
+        'cuenta_destino_id': cuenta_destino_id,
+        'cliente_destino_id': cliente_destino_id,
         'fecha': fecha,
         'monto': monto,
         'tipo': tipo,
@@ -227,6 +245,99 @@ for inicio in range(0, len(fraude_idx_ordenados), TAMANIO_RAFAGA * 4):
         # Espaciado corto (2-8 min) para que TODO el grupo quede dentro de
         # la misma ventana de 1 hora, incluso el último respecto al primero.
         transacciones[idx]['fecha'] = fecha_base_rafaga + timedelta(minutes=offset * random.randint(2, 8))
+
+# ============================================================
+# Inyección de patrones AML (Módulo 04): structuring y round-tripping
+# ============================================================
+# Se reutilizan transacciones YA generadas (fuera del pool de fraude) para
+# no alterar el total de filas ni la tasa de fraude ya fijada. Sin esta
+# inyección, un patrón de varios pasos coordinados (varias transacciones
+# chicas el mismo día, o una cadena A->B->C->A) es estadísticamente casi
+# imposible que aparezca por azar puro con solo ~10 transacciones/cliente
+# al año — y el motor de reglas AML del Módulo 04 no tendría nada real que
+# detectar.
+indices_disponibles_aml = [i for i in range(N_TRANSACCIONES) if i not in ids_fraude]
+random.shuffle(indices_disponibles_aml)
+puntero_aml = 0
+
+# --- STRUCTURING (smurfing): un cliente fracciona un monto grande en varias
+# transacciones, todas por debajo del umbral reportable ($10.000), el mismo
+# día — la tipología más clásica de evasión de reportes UIF/GAFI.
+N_CASOS_STRUCTURING = 15
+TAMANIO_STRUCTURING = 6
+for _ in range(N_CASOS_STRUCTURING):
+    grupo = indices_disponibles_aml[puntero_aml: puntero_aml + TAMANIO_STRUCTURING]
+    puntero_aml += TAMANIO_STRUCTURING
+    if len(grupo) < TAMANIO_STRUCTURING:
+        break
+    cliente_structuring = random.randint(1, N_CLIENTES)
+    cuentas_cliente_structuring = cuentas_por_cliente[cliente_structuring]
+    dia_structuring = FECHA_INICIO + timedelta(days=random.randint(0, 364))
+    for idx in grupo:
+        transacciones[idx]['cliente_id'] = cliente_structuring
+        transacciones[idx]['cuenta_id'] = random.choice(cuentas_cliente_structuring)
+        transacciones[idx]['cuenta_destino_id'] = None
+        transacciones[idx]['cliente_destino_id'] = None
+        transacciones[idx]['tipo'] = 'DEBITO'
+        transacciones[idx]['monto'] = round(random.uniform(7000, 9800), 2)
+        transacciones[idx]['fecha'] = dia_structuring.replace(
+            hour=random.randint(9, 20), minute=random.randint(0, 59), second=random.randint(0, 59)
+        )
+
+# --- ROUND-TRIPPING: 3 clientes forman un anillo A->B->C->A. La plata sale
+# de A, pasa por B y C, y vuelve a A en menos de una semana — "lavada" de
+# origen al haber pasado por varias cuentas de terceros. El monto se reduce
+# levemente en cada salto (simula comisiones/pérdidas del circuito).
+N_ANILLOS = 12
+for _ in range(N_ANILLOS):
+    grupo = indices_disponibles_aml[puntero_aml: puntero_aml + 3]
+    puntero_aml += 3
+    if len(grupo) < 3:
+        break
+    clientes_anillo = random.sample(range(1, N_CLIENTES + 1), 3)
+    fecha_base_anillo = FECHA_INICIO + timedelta(days=random.randint(0, 358))
+    monto_actual = round(random.uniform(2_000_000, 8_000_000), 2)
+    for salto, idx in enumerate(grupo):
+        origen = clientes_anillo[salto]
+        destino = clientes_anillo[(salto + 1) % 3]
+        transacciones[idx]['cliente_id'] = origen
+        transacciones[idx]['cuenta_id'] = random.choice(cuentas_por_cliente[origen])
+        transacciones[idx]['cliente_destino_id'] = destino
+        transacciones[idx]['cuenta_destino_id'] = random.choice(cuentas_por_cliente[destino])
+        transacciones[idx]['tipo'] = 'TRANSFERENCIA'
+        transacciones[idx]['canal'] = np.random.choice(['HOME_BANKING', 'APP'])
+        transacciones[idx]['comercio'] = None
+        transacciones[idx]['monto'] = round(monto_actual, 2)
+        transacciones[idx]['fecha'] = fecha_base_anillo + timedelta(
+            days=salto * 2, hours=random.randint(0, 12)
+        )
+        monto_actual *= random.uniform(0.90, 0.97)  # "comisión"/pérdida del circuito
+
+# --- CASH-INTENSIVE: un cliente concentra muchas extracciones de efectivo
+# en una ventana corta, por un monto total alto — proxy de negocio usado
+# para "mezclar" efectivo de origen no declarado (ver aml_typologies.md).
+N_CASOS_CASH = 10
+TAMANIO_CASH = 9
+for _ in range(N_CASOS_CASH):
+    grupo = indices_disponibles_aml[puntero_aml: puntero_aml + TAMANIO_CASH]
+    puntero_aml += TAMANIO_CASH
+    if len(grupo) < TAMANIO_CASH:
+        break
+    cliente_cash = random.randint(1, N_CLIENTES)
+    cuentas_cliente_cash = cuentas_por_cliente[cliente_cash]
+    dia_inicio_cash = FECHA_INICIO + timedelta(days=random.randint(0, 335))  # deja margen de 30 días
+    for idx in grupo:
+        transacciones[idx]['cliente_id'] = cliente_cash
+        transacciones[idx]['cuenta_id'] = random.choice(cuentas_cliente_cash)
+        transacciones[idx]['cuenta_destino_id'] = None
+        transacciones[idx]['cliente_destino_id'] = None
+        transacciones[idx]['tipo'] = 'EXTRACCION'
+        transacciones[idx]['canal'] = np.random.choice(['ATM', 'SUCURSAL'])
+        transacciones[idx]['comercio'] = None
+        transacciones[idx]['monto'] = round(random.uniform(60000, 120000), 2)
+        transacciones[idx]['fecha'] = dia_inicio_cash + timedelta(
+            days=random.randint(0, 29), hours=random.randint(8, 20)
+        )
 
 df_transacciones = pd.DataFrame(transacciones)
 print(f"   -> {len(df_transacciones)} transacciones generadas")

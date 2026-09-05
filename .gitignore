@@ -18,6 +18,7 @@ __pycache__/
 *.db
 **/data/raw/
 **/data/processed/
+**/output/*.md
 
 # Variables de entorno
 .env

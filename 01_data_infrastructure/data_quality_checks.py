@@ -76,6 +76,16 @@ def main():
     check("ERROR", "scoring_historico.cliente_id referencia clientes existentes",
           set(scoring['cliente_id']).issubset(clientes_validos))
 
+    # cuenta_destino_id / cliente_destino_id solo aplican a TRANSFERENCIA
+    # (NULL en el resto) — se valida solo el subconjunto no nulo.
+    destinos = transacciones.dropna(subset=['cliente_destino_id'])
+    check("ERROR", "transacciones.cliente_destino_id (no nulo) referencia clientes existentes",
+          set(destinos['cliente_destino_id']).issubset(clientes_validos))
+    check("ERROR", "transacciones.cuenta_destino_id (no nulo) referencia cuentas existentes",
+          set(destinos['cuenta_destino_id']).issubset(set(cuentas['cuenta_id'])))
+    check("WARNING", "cuenta_destino_id/cliente_destino_id solo están presentes en TRANSFERENCIA",
+          transacciones.loc[transacciones['tipo'] != 'TRANSFERENCIA', 'cliente_destino_id'].isna().all())
+
     # --- Rangos de negocio ---
     check("WARNING", "clientes.score_inicial en rango [300, 850]",
           clientes['score_inicial'].between(300, 850).all())

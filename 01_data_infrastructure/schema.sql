@@ -28,17 +28,19 @@ CREATE TABLE cuentas (
 
 -- TRANSACCIONES
 CREATE TABLE transacciones (
-    transaccion_id  INTEGER PRIMARY KEY,
-    cuenta_id       INTEGER REFERENCES cuentas(cuenta_id),
-    cliente_id      INTEGER REFERENCES clientes(cliente_id),
-    fecha           DATETIME,
-    monto           DECIMAL(15,2),
-    tipo            TEXT,         -- DEBITO, CREDITO, TRANSFERENCIA, PAGO, EXTRACCION
-    canal           TEXT,         -- HOME_BANKING, APP, ATM, SUCURSAL, POS
-    comercio        TEXT,
-    ciudad          TEXT,
-    es_fraude       BOOLEAN DEFAULT 0,
-    flag_revision   BOOLEAN DEFAULT 0
+    transaccion_id     INTEGER PRIMARY KEY,
+    cuenta_id          INTEGER REFERENCES cuentas(cuenta_id),
+    cliente_id         INTEGER REFERENCES clientes(cliente_id),
+    cuenta_destino_id  INTEGER REFERENCES cuentas(cuenta_id),   -- solo TRANSFERENCIA; NULL en el resto
+    cliente_destino_id INTEGER REFERENCES clientes(cliente_id), -- idem, desnormalizado para queries AML
+    fecha              DATETIME,
+    monto              DECIMAL(15,2),
+    tipo               TEXT,         -- DEBITO, CREDITO, TRANSFERENCIA, PAGO, EXTRACCION
+    canal              TEXT,         -- HOME_BANKING, APP, ATM, SUCURSAL, POS
+    comercio           TEXT,
+    ciudad             TEXT,
+    es_fraude          BOOLEAN DEFAULT 0,
+    flag_revision      BOOLEAN DEFAULT 0
 );
 
 -- PRÉSTAMOS
