@@ -10,7 +10,7 @@ Portfolio técnico-financiero de análisis de **riesgo crediticio, detección de
 | Módulo | Contenido | Estado |
 |---|---|---|
 | [01 — Data Infrastructure](01_data_infrastructure/) | Dataset sintético bancario (clientes, cuentas, transacciones, préstamos, scoring) + ETL + data quality checks | ✅ |
-| 02 — Credit Risk Analytics | PD / LGD / EAD / Expected Loss, vintage analysis, roll rate, scorecard | 🔜 |
+| [02 — Credit Risk Analytics](02_credit_risk/) | PD / LGD / EAD / Expected Loss, vintage analysis, roll rate, scorecard (WOE + regresión logística) | ✅ |
 | 03 — Fraud Detection | Motor de reglas, Isolation Forest, modelo supervisado, sistema de alertas | 🔜 |
 | 04 — AML / Compliance | Tipologías GAFI (structuring, layering, actividad inusual), KYC, reportes ROS | 🔜 |
 | 05 — Decision Engine | API REST (FastAPI) de scoring y decisión crediticia en tiempo real | 🔜 |

@@ -187,18 +187,43 @@ tipos_prestamo = ['PERSONAL', 'HIPOTECARIO', 'PRENDARIO']
 pesos_prestamo = [0.60, 0.25, 0.15]
 
 
+def calcular_pd_score(score, pd_min=0.005, pd_max=0.45, score_mid=550, escala=60):
+    """
+    PD (probabilidad de default) en función continua del score, mediante una
+    curva logística — la misma familia de función que usa un modelo real de
+    regresión logística para traducir un score en una probabilidad. Esto
+    garantiza que la PD sea monótona decreciente en todo el rango de score
+    (a diferencia de usar 2-3 umbrales discretos, que dejan "escalones" y
+    pueden romper la monotonicidad dentro de un mismo escalón).
+    """
+    exponente = (score - score_mid) / escala
+    return pd_min + (pd_max - pd_min) / (1 + np.exp(exponente))
+
+
+def calcular_pd_mora_temprana(score, pd_min=0.05, pd_max=0.40, score_mid=620, escala=50):
+    """Probabilidad de estar en mora temprana (30/60 días) DADO que el
+    préstamo no cayó en default. Misma lógica que calcular_pd_score pero
+    con un punto medio más alto: la mora temprana es más frecuente que el
+    default en cualquier nivel de score."""
+    exponente = (score - score_mid) / escala
+    return pd_min + (pd_max - pd_min) / (1 + np.exp(exponente))
+
+
 def asignar_estado_mora(score):
-    """Distribución de estados de mora según el score del cliente."""
-    if score >= 700:
-        estados = ['VIGENTE', 'CANCELADO', 'MORA_30']
-        pesos = [0.75, 0.20, 0.05]
-    elif score >= 550:
-        estados = ['VIGENTE', 'CANCELADO', 'MORA_30', 'MORA_60']
-        pesos = [0.60, 0.20, 0.13, 0.07]
-    else:
-        estados = ['VIGENTE', 'MORA_30', 'MORA_60', 'MORA_90', 'INCOBRABLE']
-        pesos = [0.40, 0.20, 0.18, 0.12, 0.10]
-    return np.random.choice(estados, p=pesos)
+    """
+    Asigna el estado del préstamo en dos pasos, cada uno con su propia
+    probabilidad dependiente del score (en vez de 2-3 baldes discretos):
+      1. ¿Cae en default? (MORA_90 / INCOBRABLE) — probabilidad = calcular_pd_score(score)
+      2. Si no cae en default, ¿está en mora temprana? (MORA_30 / MORA_60)
+      3. Si no, está limpio (VIGENTE / CANCELADO)
+    """
+    if np.random.random() < calcular_pd_score(score):
+        return np.random.choice(['MORA_90', 'INCOBRABLE'], p=[0.65, 0.35])
+
+    if np.random.random() < calcular_pd_mora_temprana(score):
+        return np.random.choice(['MORA_30', 'MORA_60'], p=[0.60, 0.40])
+
+    return np.random.choice(['VIGENTE', 'CANCELADO'], p=[0.70, 0.30])
 
 
 prestamos = []
