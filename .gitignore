@@ -12,6 +12,9 @@ __pycache__/
 # Jupyter
 .ipynb_checkpoints/
 
+# Testing
+.pytest_cache/
+
 # Datos (no subir datos grandes ni sensibles)
 *.csv
 *.xlsx

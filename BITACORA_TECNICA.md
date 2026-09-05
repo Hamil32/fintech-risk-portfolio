@@ -17,10 +17,11 @@ Este documento se actualiza a medida que avanzamos de módulo. No reemplaza al [
 4. [Módulo 02 — Credit Risk Analytics](#4-módulo-02--credit-risk-analytics)
 5. [Módulo 03 — Fraud Detection](#5-módulo-03--fraud-detection)
 6. [Módulo 04 — AML / Compliance](#6-módulo-04--aml--compliance)
-7. [Glosario acumulado](#7-glosario-acumulado)
-8. [Cómo revisar vos mismo cada módulo](#8-cómo-revisar-vos-mismo-cada-módulo)
-9. [Fuentes y referencias](#9-fuentes-y-referencias)
-10. [Registro de cambios](#10-registro-de-cambios)
+7. [Módulo 05 — Decision Engine](#7-módulo-05--decision-engine)
+8. [Glosario acumulado](#8-glosario-acumulado)
+9. [Cómo revisar vos mismo cada módulo](#9-cómo-revisar-vos-mismo-cada-módulo)
+10. [Fuentes y referencias](#10-fuentes-y-referencias)
+11. [Registro de cambios](#11-registro-de-cambios)
 
 ---
 
@@ -673,7 +674,87 @@ Toma los 27 casos de riesgo ALTO y genera un documento markdown con la estructur
 
 ---
 
-## 7. Glosario acumulado
+## 7. Módulo 05 — Decision Engine
+
+### 7.1 Qué problema de negocio resuelve
+
+Hasta acá, todo el portfolio analizaba cartera **existente** (riesgo, fraude, AML sobre datos ya generados). Este módulo cierra el círculo: construye el sistema que **origina** un préstamo nuevo — la API que un canal digital (app, sucursal, comercio aliado) llamaría en el momento en que un cliente pide un crédito, para decidir en segundos si se aprueba, se rechaza, o pasa a revisión humana.
+
+### 7.2 Qué se construyó
+
+| Archivo | Rol |
+|---|---|
+| [`05_decision_engine/decision_rules.json`](05_decision_engine/decision_rules.json) | Reglas y parámetros de pricing externalizados |
+| [`05_decision_engine/scoring_engine.py`](05_decision_engine/scoring_engine.py) | Toda la lógica de negocio (sin FastAPI) |
+| [`05_decision_engine/api.py`](05_decision_engine/api.py) | Capa FastAPI sobre `scoring_engine.py` |
+| [`05_decision_engine/test_api.py`](05_decision_engine/test_api.py) | 11 tests con `TestClient` |
+
+### 7.3 Decisión de diseño: consultar el riesgo, no pedirlo
+
+El instructivo original pedía que el propio solicitante incluyera su `score` y sus `dias_mora_actual` en el request HTTP. Esto tiene un problema serio: **le estaría pidiendo al cliente que autoevalúe su propio riesgo**, algo que ningún banco real haría (equivale a dejar que alguien complete su propia planilla de aprobación). Se rediseñó para que el motor reciba solo `cliente_id` + lo que el banco genuinamente no puede saber de antemano (monto, plazo, ingreso declarado), y **consulte** el resto directamente en la base del Módulo 01 (`obtener_perfil_cliente()`):
+
+- `score`: de la tabla `clientes`
+- `dias_mora_actual`: el máximo `dias_mora` entre los préstamos NO cancelados del cliente
+- `defaults_historicos`: cuántos préstamos de ese cliente llegaron alguna vez a `MORA_90`/`INCOBRABLE` (mismo criterio de "default" del Módulo 02)
+
+🟦 **Real:** en un banco real, el motor de decisión consulta el buró de crédito interno/externo — jamás confía en un dato de riesgo autoreportado por el solicitante.
+
+### 7.4 Pricing basado en riesgo — reutilizando todo el portfolio anterior
+
+```
+tasa_anual = tasa_libre_riesgo + (PD × LGD) + margen_operativo
+```
+
+Esta es la pieza más importante del módulo, porque **no inventa nada nuevo**: reutiliza exactamente la curva de PD del Módulo 01 (`calcular_pd_score`, la misma función logística) y el LGD por tipo de préstamo del Módulo 02, ambos cargados desde `decision_rules.json`. La prima de riesgo (`PD × LGD`) es, literalmente, la **Expected Loss** ya calculada en el Módulo 02 — solo que ahí se usaba para medir la pérdida de una cartera existente, y acá se usa para **poner precio a un préstamo que todavía no existe**. Es el mismo concepto financiero, aplicado en los dos extremos del ciclo de vida de un crédito: originación (acá) y monitoreo (Módulo 02).
+
+🟦 **Real:** este es el principio de *risk-based pricing* — a mayor riesgo esperado, mayor tasa — que usa cualquier scoring de admisión real.
+
+🟨 **Ilustrativo:** `tasa_libre_riesgo=40%` y `margen_operativo=5%` son valores de orden de magnitud razonables para el contexto argentino (tasas nominales altas), no una tasa de mercado vigente a una fecha específica — se actualizaría contra una tasa de referencia real (BADLAR, tasa de política monetaria) en un sistema en producción.
+
+⚠️ **Simplificación reconocida:** un pricing de Basilea "completo" también cubre un cargo de capital por la pérdida NO esperada (*Unexpected Loss*) — acá se omite, solo se cubre la pérdida esperada.
+
+### 7.5 Cuota — sistema francés
+
+```
+cuota = monto × [ i × (1+i)^n ] / [ (1+i)^n − 1 ]
+```
+
+con `i` = tasa mensual (`tasa_anual / 12`) y `n` = cantidad de cuotas. 🟦 **Real:** es la fórmula estándar de amortización de cuota fija (sistema francés), la que efectivamente usa la inmensa mayoría de préstamos personales/hipotecarios. `scoring_engine.py` también implementa la fórmula **inversa** (`monto_maximo_por_capacidad_pago`): dado el máximo que un cliente puede pagar de cuota, ¿cuál es el monto máximo que se le puede otorgar? — se despeja `monto` de la misma ecuación.
+
+### 7.6 Reglas de rechazo, aprobación y DTI
+
+- **Rechazo automático** (primera regla que se cumple, rechaza): score < 400, mora activa > 90 días, o más de 1 default histórico.
+- **DTI (Debt-to-Income):** si la cuota calculada supera el 40% del ingreso declarado, se recalcula el monto máximo viable; si ese monto cubre al menos el 50% de lo pedido, se aprueba ajustado — si no, se deriva a **revisión manual** (el sistema no rechaza de plano los casos límite, los escala a un humano).
+- **Aprobación automática:** segmento A (score ≥700) sin mora activa, si además pasa el DTI.
+
+Todas las reglas son literales de `decision_rules.json`, no están hardcodeadas en el código — se pueden ajustar sin tocar `scoring_engine.py`.
+
+### 7.7 Resultados de esta corrida
+
+11/11 tests pasan. Casos verificados manualmente contra la API real:
+
+| Caso | Cliente (score) | Resultado |
+|---|---|---|
+| Buen cliente, capacidad holgada | 791, sin mora | `APROBADO` — tasa 45.97%, cuota/ingreso 17.6% |
+| Mora activa >90 días | 548, NPL | `RECHAZADO` — "mora activa mayor a 90 días" |
+| Score bajo | 376 | `RECHAZADO` — "score por debajo del segmento D" |
+| Ingreso insuficiente para el monto pedido | 791, ingreso bajo | `APROBADO` con monto ajustado ($800k pedidos → $568k aprobados) |
+| Relación cuota/ingreso extrema (211%) | 791, ingreso muy bajo | `REVISION_MANUAL` |
+| Cliente inexistente | — | HTTP 404 |
+| Tipo de préstamo inválido | — | HTTP 422 (validación de Pydantic) |
+
+### 7.8 Lo que te pueden preguntar sobre este módulo
+
+| Pregunta | Cómo responder |
+|---|---|
+| "¿Por qué el cliente no manda su propio score en el request?" | "Porque dejar que el solicitante autoreporte su propio riesgo es un hueco de seguridad — el motor consulta el score y la mora directamente en la base interna a partir del cliente_id, como haría un banco real contra su buró de crédito." |
+| "¿Cómo se calcula la tasa de interés?" | "Con pricing basado en riesgo: tasa base + PD×LGD + margen. La parte de PD×LGD es literalmente la Expected Loss que calculé en el Módulo 02, reutilizada acá para poner precio a un crédito nuevo en vez de medir la pérdida de uno existente." |
+| "¿Qué pasa si el cliente no puede pagar la cuota completa?" | "El sistema recalcula el monto máximo que sí puede pagar con la fórmula inversa de amortización francesa. Si ese monto cubre al menos la mitad de lo pedido, se aprueba ajustado; si no, se deriva a revisión manual en vez de rechazar de plano." |
+| "¿Cómo testeaste la API?" | "Con pytest y el TestClient de FastAPI, sin necesidad de levantar un servidor real. Los clientes de prueba se buscan dinámicamente en la base según la condición que necesito (score alto, mora NPL, etc.), no están hardcodeados — así los tests siguen siendo válidos si el dataset se regenera." |
+
+---
+
+## 8. Glosario acumulado
 
 | Término | Definición |
 |---|---|
@@ -719,10 +800,17 @@ Toma los 27 casos de riesgo ALTO y genera un documento markdown con la estructur
 | **GAFI / FATF** | Grupo de Acción Financiera Internacional — organismo que define los estándares globales AML y publica tipologías de referencia |
 | **KYC (Know Your Customer)** | Proceso de verificar la identidad y el perfil de riesgo de un cliente, tanto al inicio de la relación como durante toda su vigencia |
 | **Detección de ciclos en un grafo** | Técnica para encontrar cadenas cerradas (A→B→C→A) en una red de relaciones dirigidas — la base algorítmica del round-tripping/layering |
+| **Risk-based pricing (pricing basado en riesgo)** | Fijar la tasa/precio de un producto financiero en función del riesgo esperado del cliente — a mayor riesgo, mayor tasa |
+| **DTI (Debt-to-Income)** | Relación entre la cuota de un préstamo y el ingreso del solicitante — mide capacidad de pago |
+| **Sistema francés (amortización)** | Método de amortización de cuota fija: la cuota no cambia mes a mes, pero varía la proporción entre interés y capital que la componen |
+| **Unexpected Loss (pérdida no esperada)** | La variabilidad de la pérdida por sobre la Expected Loss — el motivo por el que los bancos deben mantener capital regulatorio, no solo provisionar la pérdida esperada |
+| **API REST** | Interfaz que expone funcionalidad de un sistema a través de peticiones HTTP (GET/POST/etc.), con respuestas típicamente en JSON |
+| **Pydantic** | Librería de Python que valida y tipa automáticamente los datos de entrada/salida de una API (usada por FastAPI) |
+| **`TestClient`** | Utilidad de FastAPI/Starlette para testear una API llamándola en memoria, sin levantar un servidor HTTP real |
 
 ---
 
-## 8. Cómo revisar vos mismo cada módulo
+## 9. Cómo revisar vos mismo cada módulo
 
 Checklist genérico para cualquier módulo nuevo que agreguemos:
 
@@ -734,7 +822,7 @@ Checklist genérico para cualquier módulo nuevo que agreguemos:
 
 ---
 
-## 9. Fuentes y referencias
+## 10. Fuentes y referencias
 
 - **Escala de credit score 300–850:** convención de la industria, popularizada por FICO (Fair Isaac Corporation), ampliamente adaptada por scorecards de bancos y fintechs a nivel global, incluida Latinoamérica.
 - **Umbral de 90 días para NPL:** convención del Acuerdo de Basilea (Basel II/III) y ampliamente usada por reguladores bancarios, incluido el marco de clasificación de deudores de BCRA (que categoriza situación crediticia según días de atraso).
@@ -749,11 +837,14 @@ Checklist genérico para cualquier módulo nuevo que agreguemos:
 - **GAFI / UIF:** Grupo de Acción Financiera Internacional (FATF) — tipologías públicas de lavado de dinero, [fatf-gafi.org](https://www.fatf-gafi.org); Unidad de Información Financiera de Argentina (organismo regulador AML local), [argentina.gob.ar/uif](https://www.argentina.gob.ar/uif).
 - **Structuring, round-tripping, actividad inusual, cash-intensive:** tipologías de lavado de dinero públicamente documentadas por GAFI y por informes de tipologías de UIF — no inventadas para este proyecto.
 - **Detección de ciclos en grafos dirigidos:** fundamento algorítmico estándar de ciencia de la computación (teoría de grafos), aplicado acá a un caso de uso AML mediante self-joins en vez de una librería de grafos dedicada.
+- **Sistema francés de amortización (cuota fija):** método estándar de amortización de préstamos, el más usado en préstamos personales e hipotecarios.
+- **Risk-based pricing (tasa = costo de fondeo + PD×LGD + margen):** principio estándar de la industria financiera para poner precio a un crédito nuevo en función de su riesgo esperado.
+- **FastAPI / Pydantic / TestClient:** documentación oficial de FastAPI ([fastapi.tiangolo.com](https://fastapi.tiangolo.com)) — framework y prácticas estándar para construir y testear APIs REST en Python.
 - Todo lo demás (parámetros exactos de las distribuciones, pesos de las categorías) es una **aproximación razonada por mí** para producir un dataset sintético realista, no una cifra tomada de una fuente oficial — se marca como 🟨 en cada sección para que quede explícito.
 
 ---
 
-## 10. Registro de cambios
+## 11. Registro de cambios
 
 | Fecha | Módulo | Cambio |
 |---|---|---|
@@ -764,4 +855,5 @@ Checklist genérico para cualquier módulo nuevo que agreguemos:
 | 2026-09-05 | 01 — Data Infrastructure | **Fix post-Módulo 03:** se detectó que el modelo supervisado de fraude daba 100% de precisión/recall — señal de dataset poco realista (fronteras perfectamente separables entre fraude y no-fraude). Se corrigió `generate_synthetic_data.py` para que el fraude tenga solapamiento realista con transacciones legítimas (monto, horario, canal) y se inyectó un patrón de ráfaga (velocity) real (ver sección 5.6). Se agregó también `reseed()` por sección para desacoplar la aleatoriedad entre secciones del generador (ver sección 2). Dataset regenerado; los resultados de los Módulos 01 y 02 en este documento reflejan la corrida posterior a este fix. |
 | 2026-09-05 | 04 — AML / Compliance | Módulo completado: `aml_rule_engine.py` (structuring, round-tripping vía self-joins, actividad inusual, cash-intensive), `kyc_validator.py`, `sar_report_generator.py`, `aml_typologies.md`, `compliance_report_template.md` y 3 archivos SQL. |
 | 2026-09-05 | 01 — Data Infrastructure | **Extensión para Módulo 04:** se agregaron las columnas `cuenta_destino_id`/`cliente_destino_id` a `transacciones` (solo pobladas en TRANSFERENCIA) — sin ellas no se puede detectar round-tripping/layering, que son patrones de flujo de fondos entre partes (ver sección 6.2). Se inyectaron además patrones deliberados de structuring (15 casos), round-tripping (12 anillos) y cash-intensive (10 casos). Dataset regenerado; los números de los Módulos 01-03 en este documento reflejan la corrida posterior a esta extensión (cambios menores, ±1-2 puntos porcentuales en las métricas del Módulo 03). |
+| 2026-09-05 | 05 — Decision Engine | Módulo completado: `scoring_engine.py`, `api.py` (FastAPI), `test_api.py` (11 tests), `decision_rules.json`, `business_rules.md`, `api_documentation.md`. Rediseño respecto al instructivo original: el motor consulta el riesgo del cliente en la base (Módulo 01) en vez de aceptarlo autoreportado en el request, y la tasa de interés se calcula con pricing basado en riesgo (PD del Módulo 01 × LGD del Módulo 02) en vez de una tabla de tasas fija. |
 

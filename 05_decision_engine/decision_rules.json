@@ -1,0 +1,45 @@
+{
+  "_comentario": "Reglas de negocio del motor de decisión crediticia. Externalizadas en JSON para que un área de Negocio/Riesgo pueda ajustarlas sin tocar código. Los valores marcados como ilustrativos no son cifras normativas ni de mercado vigentes.",
+
+  "segmentacion_score": {
+    "_comentario": "Mismos 5 segmentos y mismos cortes de score usados en el Módulo 02 (pd_lgd_ead.py) — se reutiliza la misma segmentación en todo el portfolio.",
+    "bins": [0, 400, 500, 600, 700, 850],
+    "labels": ["E", "D", "C", "B", "A"]
+  },
+
+  "curva_pd": {
+    "_comentario": "Misma función logística y mismos parámetros usados para generar la PD en 01_data_infrastructure/generate_synthetic_data.py (calcular_pd_score). Se reutiliza acá para que el motor de decisión sea consistente con los datos sobre los que fue 'calibrado'.",
+    "pd_min": 0.005,
+    "pd_max": 0.45,
+    "score_mid": 550,
+    "escala": 60
+  },
+
+  "lgd_por_tipo": {
+    "_comentario": "Mismos valores de LGD usados en el Módulo 02 (pd_lgd_ead.py), por tipo de garantía.",
+    "HIPOTECARIO": 0.25,
+    "PRENDARIO": 0.45,
+    "PERSONAL": 0.75
+  },
+
+  "pricing": {
+    "_comentario": "🟨 Ilustrativo. tasa_anual = tasa_libre_riesgo + (PD × LGD) + margen_operativo — pricing basado en riesgo (risk-based pricing): la prima de riesgo es literalmente la Expected Loss (PD×LGD) expresada como tasa. Simplificación reconocida: en Basilea el pricing real también debería cubrir un cargo de capital por pérdida NO esperada (Unexpected Loss), que acá se omite.",
+    "tasa_libre_riesgo": 0.40,
+    "margen_operativo": 0.05
+  },
+
+  "reglas_rechazo_automatico": [
+    {"campo": "score", "operador": "<", "valor": 400, "descripcion": "Score por debajo del segmento D — fuera de política de admisión vigente"},
+    {"campo": "dias_mora_actual", "operador": ">", "valor": 90, "descripcion": "Cliente con mora activa mayor a 90 días (NPL)"},
+    {"campo": "defaults_historicos", "operador": ">", "valor": 1, "descripcion": "Más de 1 default histórico registrado en la base"}
+  ],
+
+  "reglas_aprobacion_automatica": [
+    {"campo": "score", "operador": ">=", "valor": 700, "descripcion": "Score en segmento A (muy bajo riesgo)"},
+    {"campo": "dias_mora_actual", "operador": "=", "valor": 0, "descripcion": "Sin mora activa"}
+  ],
+
+  "relacion_cuota_ingreso_max": 0.40,
+
+  "_comentario_dti": "Si la cuota calculada supera este % del ingreso mensual declarado, el monto se ajusta a la baja o el caso pasa a revisión manual — ver scoring_engine.py: evaluar_credito()."
+}
