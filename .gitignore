@@ -1,0 +1,29 @@
+# Entorno virtual
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Datos (no subir datos grandes ni sensibles)
+*.csv
+*.xlsx
+*.db
+**/data/raw/
+**/data/processed/
+
+# Variables de entorno
+.env
+
+# VS Code
+.vscode/
+
+# Power BI (los .pbix son binarios, subir solo si son livianos)
+# *.pbix
