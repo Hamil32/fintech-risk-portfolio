@@ -14,7 +14,7 @@ Portfolio técnico-financiero de análisis de **riesgo crediticio, detección de
 | [03 — Fraud Detection](03_fraud_detection/) | Motor de reglas, Isolation Forest, modelo supervisado, sistema de alertas priorizado | ✅ |
 | [04 — AML / Compliance](04_aml_compliance/) | Tipologías GAFI (structuring, round-tripping, actividad inusual, cash-intensive), KYC, borradores de ROS | ✅ |
 | [05 — Decision Engine](05_decision_engine/) | API REST (FastAPI) de scoring y decisión crediticia en tiempo real, con pricing basado en riesgo | ✅ |
-| 06 — Executive Dashboard | Dashboard consolidado en Power BI con KPIs de cartera, fraude y AML | 🔜 |
+| [06 — Executive Dashboard](06_executive_dashboard/) | Dataset consolidado + guía de construcción para el dashboard ejecutivo en Power BI (KPIs de cartera, fraude y AML) | ✅ |
 
 ## Stack
 

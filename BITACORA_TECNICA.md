@@ -18,10 +18,11 @@ Este documento se actualiza a medida que avanzamos de módulo. No reemplaza al [
 5. [Módulo 03 — Fraud Detection](#5-módulo-03--fraud-detection)
 6. [Módulo 04 — AML / Compliance](#6-módulo-04--aml--compliance)
 7. [Módulo 05 — Decision Engine](#7-módulo-05--decision-engine)
-8. [Glosario acumulado](#8-glosario-acumulado)
-9. [Cómo revisar vos mismo cada módulo](#9-cómo-revisar-vos-mismo-cada-módulo)
-10. [Fuentes y referencias](#10-fuentes-y-referencias)
-11. [Registro de cambios](#11-registro-de-cambios)
+8. [Módulo 06 — Executive Dashboard](#8-módulo-06--executive-dashboard)
+9. [Glosario acumulado](#9-glosario-acumulado)
+10. [Cómo revisar vos mismo cada módulo](#10-cómo-revisar-vos-mismo-cada-módulo)
+11. [Fuentes y referencias](#11-fuentes-y-referencias)
+12. [Registro de cambios](#12-registro-de-cambios)
 
 ---
 
@@ -754,7 +755,63 @@ Todas las reglas son literales de `decision_rules.json`, no están hardcodeadas 
 
 ---
 
-## 8. Glosario acumulado
+## 8. Módulo 06 — Executive Dashboard
+
+### 8.1 Qué problema de negocio resuelve
+
+Ningún director de riesgo abre 4 carpetas de Python para ver cómo está la cartera — quiere **una pantalla**. Este módulo cierra el portfolio consolidando lo que generaron los Módulos 01-04 en un dashboard de Power BI de 4 páginas.
+
+### 8.2 Por qué esta es la única parte que no se generó 100% por código
+
+Un archivo `.pbix` es un formato binario propietario de Microsoft — no existe forma de "escribirlo" con un script de la misma manera que se genera un CSV o un `.py`. Lo que sí se puede automatizar (y se hizo) es **todo lo previo**: dejar los datos ya consolidados y curados en un esquema listo para importar, y documentar exactamente qué medida DAX y qué visual va en cada página, para que armar el `.pbix` a mano sea un ejercicio de seguir instrucciones, no de empezar de cero.
+
+### 8.3 Qué se construyó
+
+| Archivo | Rol |
+|---|---|
+| [`06_executive_dashboard/build_dashboard_dataset.py`](06_executive_dashboard/build_dashboard_dataset.py) | Consolida las salidas de los Módulos 01-04 en un esquema tipo estrella |
+| [`06_executive_dashboard/power_bi_build_guide.md`](06_executive_dashboard/power_bi_build_guide.md) | Guía paso a paso: importar, relacionar, y qué visual va en cada página |
+| [`06_executive_dashboard/dax_measures.md`](06_executive_dashboard/dax_measures.md) | Todas las medidas DAX |
+| [`06_executive_dashboard/kpis_financieros.md`](06_executive_dashboard/kpis_financieros.md) | Glosario de KPIs con fórmula y valor actual |
+| [`06_executive_dashboard/portfolio_presentation.md`](06_executive_dashboard/portfolio_presentation.md) | Resumen ejecutivo de los 5 módulos |
+
+### 8.4 Decisión de diseño: esquema en estrella + medidas DAX, no números precalculados
+
+Se podría haber generado un solo CSV con los KPIs ya calculados en Python (ej. una fila con "NPL: 6.38%, EL: 5.57%, ..."), y que Power BI solo los muestre. **Se descartó esa opción a propósito.** En cambio, `build_dashboard_dataset.py` deja tablas de **hechos y dimensiones** (`fact_prestamos`, `fact_transacciones`, `dim_clientes`, etc.) al nivel de detalle más granular posible, y todas las métricas (NPL, Expected Loss, tasa de fraude) se calculan con **medidas DAX** dentro de Power BI.
+
+🟦 **Por qué esto es lo correcto:** con números precalculados en un CSV, el dashboard queda **estático** — no se puede filtrar por segmento, por fecha, ni cruzar con ningún otro campo, porque el número ya "vino calculado". Con medidas DAX sobre datos de detalle, cualquier segmentador (slicer) que agregues (por provincia, por tipo de préstamo, por rango de fechas) **recalcula automáticamente** cada KPI — es la diferencia entre un reporte y un dashboard de verdad. Este es exactamente el motivo por el que un analista de BI real casi nunca precalcula KPIs en la fuente: pierde toda la interactividad que es la razón de ser de una herramienta como Power BI.
+
+### 8.5 El esquema de datos
+
+```
+        dim_clientes (5.000 filas)
+               │
+    ┌──────────┼──────────────┐
+    │          │              │
+fact_prestamos │      fact_alertas_aml
+ (2.000)       │           (42)
+               │
+     fact_transacciones (50.000)
+
+dim_vintage (13) y fact_roll_rate (25) — sin relación,
+ya vienen agregados por cohorte/segmento, no por cliente.
+```
+
+🟦 **Real:** este es un **esquema en estrella** (star schema) — el patrón de modelado estándar para BI/data warehousing: una tabla de dimensión central rodeada de tablas de hechos, en vez de un único CSV ancho con todo mezclado. Facilita enormemente que Power BI optimice las consultas y que las relaciones sean claras.
+
+`fact_roll_rate` se generó con `.melt()` de pandas (formato ancho → largo): la matriz de transición del Módulo 02 viene como una tabla de 5×5 (una columna por segmento de destino), pero el visual **Matrix** de Power BI necesita tres columnas (`desde`, `hacia`, `porcentaje`) para poder pivotear él mismo — es el mismo concepto de "tidy data" que dicta cuándo una tabla está en el formato correcto para análisis.
+
+### 8.6 Lo que te pueden preguntar sobre este módulo
+
+| Pregunta | Cómo responder |
+|---|---|
+| "¿Por qué no generaste el .pbix directamente?" | "Porque es un formato binario propietario, no se puede generar por script. Automaticé todo lo anterior: la consolidación de datos y la definición exacta de qué medida y qué visual va en cada página, para que armar el dashboard sea mecánico." |
+| "¿Por qué calculás los KPIs con DAX y no en Python?" | "Porque un número precalculado en un CSV congela el dashboard — no se puede filtrar ni cruzar. Con medidas DAX sobre datos de detalle, cualquier segmentador que agregue recalcula el KPI automáticamente. Es la diferencia entre un reporte estático y un dashboard interactivo real." |
+| "¿Qué es un esquema en estrella?" | "Un modelo de datos con una tabla de dimensión central (en mi caso, clientes) rodeada de tablas de hechos (préstamos, transacciones, alertas) — el patrón estándar de modelado para BI, porque hace que las relaciones sean claras y las consultas eficientes." |
+
+---
+
+## 9. Glosario acumulado
 
 | Término | Definición |
 |---|---|
@@ -807,10 +864,14 @@ Todas las reglas son literales de `decision_rules.json`, no están hardcodeadas 
 | **API REST** | Interfaz que expone funcionalidad de un sistema a través de peticiones HTTP (GET/POST/etc.), con respuestas típicamente en JSON |
 | **Pydantic** | Librería de Python que valida y tipa automáticamente los datos de entrada/salida de una API (usada por FastAPI) |
 | **`TestClient`** | Utilidad de FastAPI/Starlette para testear una API llamándola en memoria, sin levantar un servidor HTTP real |
+| **Esquema en estrella (star schema)** | Modelo de datos de BI con una tabla de dimensión central rodeada de tablas de hechos — el patrón estándar para modelar datos analíticos |
+| **DAX (Data Analysis Expressions)** | El lenguaje de fórmulas de Power BI, usado para definir medidas que se recalculan según el contexto de filtro vigente |
+| **Medida vs. columna calculada (Power BI)** | Una medida se recalcula dinámicamente según los filtros activos (segmentadores, página); una columna calculada se evalúa una sola vez, fila por fila, al cargar los datos |
+| **Tidy data (dato ordenado)** | Formato de tabla donde cada fila es una observación y cada columna una variable — el formato "largo" que necesitan la mayoría de las herramientas de análisis/BI para pivotear correctamente |
 
 ---
 
-## 9. Cómo revisar vos mismo cada módulo
+## 10. Cómo revisar vos mismo cada módulo
 
 Checklist genérico para cualquier módulo nuevo que agreguemos:
 
@@ -822,7 +883,7 @@ Checklist genérico para cualquier módulo nuevo que agreguemos:
 
 ---
 
-## 10. Fuentes y referencias
+## 11. Fuentes y referencias
 
 - **Escala de credit score 300–850:** convención de la industria, popularizada por FICO (Fair Isaac Corporation), ampliamente adaptada por scorecards de bancos y fintechs a nivel global, incluida Latinoamérica.
 - **Umbral de 90 días para NPL:** convención del Acuerdo de Basilea (Basel II/III) y ampliamente usada por reguladores bancarios, incluido el marco de clasificación de deudores de BCRA (que categoriza situación crediticia según días de atraso).
@@ -840,11 +901,13 @@ Checklist genérico para cualquier módulo nuevo que agreguemos:
 - **Sistema francés de amortización (cuota fija):** método estándar de amortización de préstamos, el más usado en préstamos personales e hipotecarios.
 - **Risk-based pricing (tasa = costo de fondeo + PD×LGD + margen):** principio estándar de la industria financiera para poner precio a un crédito nuevo en función de su riesgo esperado.
 - **FastAPI / Pydantic / TestClient:** documentación oficial de FastAPI ([fastapi.tiangolo.com](https://fastapi.tiangolo.com)) — framework y prácticas estándar para construir y testear APIs REST en Python.
+- **Esquema en estrella / modelado dimensional:** práctica estándar de data warehousing y BI, documentada extensamente en la literatura de Kimball (*The Data Warehouse Toolkit*).
+- **DAX y buenas prácticas de medidas vs. columnas calculadas:** documentación oficial de Microsoft Power BI ([learn.microsoft.com/power-bi](https://learn.microsoft.com/power-bi)).
 - Todo lo demás (parámetros exactos de las distribuciones, pesos de las categorías) es una **aproximación razonada por mí** para producir un dataset sintético realista, no una cifra tomada de una fuente oficial — se marca como 🟨 en cada sección para que quede explícito.
 
 ---
 
-## 11. Registro de cambios
+## 12. Registro de cambios
 
 | Fecha | Módulo | Cambio |
 |---|---|---|
@@ -856,4 +919,5 @@ Checklist genérico para cualquier módulo nuevo que agreguemos:
 | 2026-09-05 | 04 — AML / Compliance | Módulo completado: `aml_rule_engine.py` (structuring, round-tripping vía self-joins, actividad inusual, cash-intensive), `kyc_validator.py`, `sar_report_generator.py`, `aml_typologies.md`, `compliance_report_template.md` y 3 archivos SQL. |
 | 2026-09-05 | 01 — Data Infrastructure | **Extensión para Módulo 04:** se agregaron las columnas `cuenta_destino_id`/`cliente_destino_id` a `transacciones` (solo pobladas en TRANSFERENCIA) — sin ellas no se puede detectar round-tripping/layering, que son patrones de flujo de fondos entre partes (ver sección 6.2). Se inyectaron además patrones deliberados de structuring (15 casos), round-tripping (12 anillos) y cash-intensive (10 casos). Dataset regenerado; los números de los Módulos 01-03 en este documento reflejan la corrida posterior a esta extensión (cambios menores, ±1-2 puntos porcentuales en las métricas del Módulo 03). |
 | 2026-09-05 | 05 — Decision Engine | Módulo completado: `scoring_engine.py`, `api.py` (FastAPI), `test_api.py` (11 tests), `decision_rules.json`, `business_rules.md`, `api_documentation.md`. Rediseño respecto al instructivo original: el motor consulta el riesgo del cliente en la base (Módulo 01) en vez de aceptarlo autoreportado en el request, y la tasa de interés se calcula con pricing basado en riesgo (PD del Módulo 01 × LGD del Módulo 02) en vez de una tabla de tasas fija. |
+| 2026-09-05 | 06 — Executive Dashboard | Módulo completado: `build_dashboard_dataset.py` (consolida los Módulos 01-04 en un esquema en estrella), `power_bi_build_guide.md`, `dax_measures.md`, `kpis_financieros.md`, `portfolio_presentation.md`. El `.pbix` en sí queda pendiente de construcción manual en Power BI Desktop por parte del usuario, siguiendo la guía — es la única entrega del portfolio que no se genera por código. Portfolio de 6 módulos completo. |
 
