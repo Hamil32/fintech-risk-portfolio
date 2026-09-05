@@ -3,6 +3,7 @@
 Portfolio técnico-financiero de análisis de **riesgo crediticio, detección de fraude, AML/Compliance y BI** sobre un banco ficticio ("Banco Río Digital"), construido con Python, SQL y Power BI.
 
 > 📄 Ver el instructivo completo del proyecto en [`FINTECH_RISK_PORTFOLIO_INSTRUCTIVO.md`](FINTECH_RISK_PORTFOLIO_INSTRUCTIVO.md).
+> 📘 Ver el paso a paso técnico (qué se hizo, cómo, con qué fórmulas y de dónde sale cada criterio) en [`BITACORA_TECNICA.md`](BITACORA_TECNICA.md).
 
 ## Qué incluye
 
